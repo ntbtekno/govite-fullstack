@@ -14,13 +14,14 @@ import (
 )
 
 type Service struct {
-	Repo   domain.Repository
-	Crypto domain.Crypto
-	OTP    domain.OTP
-	Mail   domain.Mailer
-	Tx     kernel.Tx
-	Audit  kernel.Auditor
-	WebURL string
+	Repo    domain.Repository
+	Crypto  domain.Crypto
+	OTP     domain.OTP
+	Mail    domain.Mailer
+	Captcha *Captcha
+	Tx      kernel.Tx
+	Audit   kernel.Auditor
+	WebURL  string
 }
 
 func notFound(err error) bool { return errors.Is(err, kernel.ErrNotFound) }
@@ -38,9 +39,13 @@ func (s *Service) Authenticate(token string) (kernel.Principal, error) {
 
 func (s *Service) HashPassword(plain string) (string, error) { return s.Crypto.HashPassword(plain) }
 
-// Login verifies the password; returns a session or a 2FA challenge.
-// login may be an email (contains @) or a username.
-func (s *Service) Login(ctx context.Context, login, password string, cl domain.Client) (*domain.Session, *domain.Challenge, error) {
+// Login verifies the captcha and password; returns a session or a 2FA
+// challenge. login may be an email (contains @) or a username. The captcha is
+// checked first, so a wrong code fails before any credential lookup.
+func (s *Service) Login(ctx context.Context, login, password, captchaID, captcha string, cl domain.Client) (*domain.Session, *domain.Challenge, error) {
+	if err := s.Captcha.Verify(ctx, captchaID, captcha); err != nil {
+		return nil, nil, err
+	}
 	var u domain.User
 	var err error
 	if norm, ok := isEmail(login); ok {
@@ -81,10 +86,13 @@ func isEmail(login string) (string, bool) {
 	return "", false
 }
 
-// LoginMitra verifies mitraKode, username and password. The
-// returned error is always generic — the caller must never
-// distinguish between wrong mitra, username, or password.
-func (s *Service) LoginMitra(ctx context.Context, mitraKode, username, password string, cl domain.Client) (*domain.Session, *domain.Challenge, error) {
+// LoginMitra verifies captcha, mitraKode, username and password. The captcha
+// is checked first; the returned error is always generic — the caller must
+// never distinguish between wrong captcha, mitra, username, or password.
+func (s *Service) LoginMitra(ctx context.Context, mitraKode, username, password, captchaID, captcha string, cl domain.Client) (*domain.Session, *domain.Challenge, error) {
+	if err := s.Captcha.Verify(ctx, captchaID, captcha); err != nil {
+		return nil, nil, err
+	}
 	m, err := s.Repo.MitraByKode(ctx, mitraKode)
 	if notFound(err) || (err == nil && !m.IsActive) {
 		s.Crypto.BurnPassword(password)

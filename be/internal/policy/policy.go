@@ -70,6 +70,7 @@ var Security = struct {
 	EmailVerificationTTL  time.Duration
 	TwoFactorChallengeTTL time.Duration
 	MaxCodeAttempts       int
+	CaptchaTTL            time.Duration
 }{
 	PasswordMinLength:     8,
 	PasswordMaxLength:     128,
@@ -81,6 +82,7 @@ var Security = struct {
 	EmailVerificationTTL:  24 * time.Hour,
 	TwoFactorChallengeTTL: 5 * time.Minute,
 	MaxCodeAttempts:       5,
+	CaptchaTTL:            2 * time.Minute,
 }
 
 // FormatDuration renders "30 minutes", "1 day", "7 days" for emails.

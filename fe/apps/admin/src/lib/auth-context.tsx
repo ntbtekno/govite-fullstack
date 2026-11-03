@@ -25,7 +25,19 @@ interface AuthState {
 
 export interface AuthContextValue extends AuthState {
   ready: Promise<SettledStatus>
-  login: (email: string, password: string) => Promise<LoginResponse>
+  login: (
+    login: string,
+    password: string,
+    captchaId: string,
+    captcha: string
+  ) => Promise<LoginResponse>
+  loginMitra: (
+    mitraKode: string,
+    username: string,
+    password: string,
+    captchaId: string,
+    captcha: string
+  ) => Promise<LoginResponse>
   verifyTwoFactor: (
     challengeToken: string,
     code: string
@@ -102,8 +114,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const login = useCallback(
-    async (email: string, password: string) =>
-      finishLogin(await authApi.login({ email, password })),
+    async (
+      login: string,
+      password: string,
+      captchaId: string,
+      captcha: string
+    ) =>
+      finishLogin(await authApi.login({ login, password, captchaId, captcha })),
+    [finishLogin]
+  )
+
+  const loginMitra = useCallback(
+    async (
+      mitraKode: string,
+      username: string,
+      password: string,
+      captchaId: string,
+      captcha: string
+    ) =>
+      finishLogin(
+        await authApi.loginMitra({
+          mitraKode,
+          username,
+          password,
+          captchaId,
+          captcha,
+        })
+      ),
     [finishLogin]
   )
 
@@ -163,6 +200,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       ...state,
       ready: ready.promise,
       login,
+      loginMitra,
       verifyTwoFactor,
       verifyTwoFactorBackup,
       logout,
@@ -173,6 +211,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [
       state,
       login,
+      loginMitra,
       verifyTwoFactor,
       verifyTwoFactorBackup,
       logout,

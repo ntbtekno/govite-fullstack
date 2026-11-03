@@ -402,6 +402,37 @@ Jangan melompati urutan.
   berhasil. Tidak ada kode captcha yang muncul di response
   JSON selain gambar, tidak ada di log.
 
+**Status 3 Nov 2026 — SELESAI (backend + frontend).**
+
+- Backend: `auth/domain` (port `CaptchaStore`, `CaptchaImage`,
+  `ErrInvalidCaptcha`), `auth/application/captcha.go` (Issue
+  pakai 5 karakter `ABCDEFGHJKLMNPQRSTUVWXYZ23456789`,
+  `Verify` sekali pakai), `auth/infrastructure/captcha.go`
+  (Redis `GETDEL` + fallback in-memory bermutex) dan
+  `captcha_image.go` (PNG stdlib + font bitmap, tanpa
+  dependensi luar). Verifikasi captcha dipanggil SEBELUM cek
+  password di `Login` dan `LoginMitra`. Endpoint publik
+  `GET /api/v1/auth/captcha` dengan `Cache-Control: no-store`
+  dan throttle terpisah (`CAPTCHA_THROTTLE_LIMIT`, default 30/
+  menit/IP). Kode captcha hanya dikirim sebagai gambar; yang
+  disimpan di store HANYA hash (HMAC) + expiry; tidak ada log
+  kode.
+- Frontend: `features/auth/components/captcha-field.tsx`
+  (memuat `GET /auth/captcha`, tombol refresh, reload otomatis
+  setiap login gagal), diintegrasikan ke `login-form.tsx` yang
+  kini mendukung `variant: "admin" | "mitra"`.
+- Bukti: `be make lint test` dan `make test-e2e` (Postgres 17
+  sementara di port 5436) lolos; test `TestCaptchaLogin`
+  (tanpa captcha 400, salah → `INVALID_CAPTCHA`, sekali pakai
+  gagal pada percobaan kedua, captcha benar 201),
+  `TestCaptchaExpired`, `TestCaptchaLoginMitra` lolos.
+  `fe pnpm lint && typecheck && test && build` lolos.
+- Catatan: `TestOpenAPICoversRuntimeRoutes` menuntut route
+  mitra Milestone 1 didokumentasikan; 5 route mitra +
+  `login-mitra` + `captcha` ditambahkan ke
+  `internal/platform/docs/openapi.json`. Daftar TRUNCATE test
+  e2e ditambah `mitra`.
+
 ### Milestone 4 — Isolasi mitra di fitur user
 
 - Scope `mitra` di `Guard.Resolve` (aturan 2.3), filter

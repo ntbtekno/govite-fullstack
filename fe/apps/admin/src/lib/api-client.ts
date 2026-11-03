@@ -53,6 +53,8 @@ export interface ApiRequestOptions<TResponse, TBody> {
   body?: TBody
   accessToken?: string | null
   schema?: { parse: (data: unknown) => TResponse }
+  /** fetch cache mode; captcha uses "no-store" so a spent image is never reused. */
+  cache?: RequestCache
 }
 
 async function send(
@@ -62,6 +64,7 @@ async function send(
   const res = await fetch(`${API_BASE_URL}${path}`, {
     method: options.method ?? "GET",
     credentials: "include",
+    cache: options.cache,
     headers: {
       // FormData must not get a Content-Type: the browser adds the multipart boundary.
       ...(options.body && !(options.body instanceof FormData)

@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha512"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"io"
@@ -24,6 +25,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pquerna/otp/totp"
 
+	authdomain "govite/internal/auth/domain"
 	"govite/internal/kernel"
 	"govite/internal/platform/config"
 	"govite/internal/platform/crypto"
@@ -48,6 +50,13 @@ type env struct {
 }
 
 func setup(t *testing.T) *env {
+	return setupWith(t, nil, captchaImage{})
+}
+
+// setupWith lets a test inject the captcha store (to force expiry/expired
+// entries) and image renderer. Nil store uses the real in-memory store.
+func setupWith(t *testing.T, capStore authdomain.CaptchaStore, image authdomain.CaptchaImage) *env {
+	t.Helper()
 	url := os.Getenv("TEST_DATABASE_URL")
 	if url == "" {
 		t.Skip("TEST_DATABASE_URL not set")
@@ -61,13 +70,13 @@ func setup(t *testing.T) *env {
 	if err := postgres.Migrate(ctx, pool, "up"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `TRUNCATE role, permission, "user", audit_log, app_setting, notification, announcement, webhook_event, api_key, attachment, fcm_device CASCADE`); err != nil {
+	if _, err := pool.Exec(ctx, `TRUNCATE role, permission, "user", audit_log, app_setting, notification, announcement, webhook_event, api_key, attachment, fcm_device, mitra CASCADE`); err != nil {
 		t.Fatal(err)
 	}
 	m := &mail.Memory{}
-	cfg := config.Config{Env: "test", WebURL: "http://web.test", JWTSecret: strings.Repeat("s", 32), RefreshPepper: strings.Repeat("p", 16), ThrottleLimit: 100000, LoginThrottleLimit: 100000, LogLevel: "silent", MidtransServerKey: "test-server-key"}
+	cfg := config.Config{Env: "test", WebURL: "http://web.test", JWTSecret: strings.Repeat("s", 32), RefreshPepper: strings.Repeat("p", 16), ThrottleLimit: 100000, LoginThrottleLimit: 100000, CaptchaThrottleLimit: 100000, LogLevel: "silent", MidtransServerKey: "test-server-key"}
 	push := &fcm.Memory{}
-	d := server.Deps{Cfg: cfg, Pool: pool, Mail: m, Push: push}
+	d := server.Deps{Cfg: cfg, Pool: pool, Mail: m, Push: push, CaptchaImage: image, CaptchaStore: capStore}
 	if endpoint := os.Getenv("TEST_MINIO_ENDPOINT"); endpoint != "" {
 		d.Files, err = storage.New(storage.Config{Endpoint: endpoint, AccessKey: "minio", SecretKey: "minio12345", Bucket: "app-test", PublicEndpoint: "http://" + endpoint})
 		if err != nil {
@@ -108,6 +117,59 @@ func (r res) errCode() string {
 	m, _ := r.Body["error"].(map[string]any)
 	s, _ := m["code"].(string)
 	return s
+}
+
+// captchaImage is a test double for the renderer: it encodes the plaintext
+// code into the data URL so a test can solve the challenge without OCR. Real
+// production renders a PNG and never exposes the code.
+type captchaImage struct{}
+
+const testImagePrefix = "data:image/png;base64,test:"
+
+func (captchaImage) Render(code string) (string, error) {
+	return testImagePrefix + base64.StdEncoding.EncodeToString([]byte(code)), nil
+}
+
+// expiredStore stores the last hash but reports every Take as not found,
+// simulating a challenge that has aged out. Put returns nil so Issue succeeds.
+type expiredStore struct{}
+
+func (expiredStore) Put(context.Context, string, string, time.Duration) error { return nil }
+func (expiredStore) Take(context.Context, string) (string, error)             { return "", kernel.ErrNotFound }
+
+// solveCaptcha fetches a challenge and returns the id plus the answer decoded
+// from the test image.
+func (e *env) solveCaptcha() (id, answer string) {
+	e.t.Helper()
+	r := e.do("GET", "/auth/captcha", nil)
+	if r.Code != 200 {
+		e.t.Fatalf("captcha: %d %s", r.Code, r.Raw)
+	}
+	d := r.data()
+	if r.Header.Get("Cache-Control") != "no-store" {
+		e.t.Fatalf("captcha must be no-store, got %q", r.Header.Get("Cache-Control"))
+	}
+	image, _ := d["image"].(string)
+	if !strings.HasPrefix(image, testImagePrefix) {
+		e.t.Fatalf("unexpected captcha image: %.40q", image)
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(image, testImagePrefix))
+	must(e.t, err)
+	if len(raw) != 5 {
+		e.t.Fatalf("captcha code length %d", len(raw))
+	}
+	return d["captchaId"].(string), string(raw)
+}
+
+// loginFields merges a freshly solved captcha into a login body.
+func (e *env) loginFields(fields map[string]string) map[string]string {
+	e.t.Helper()
+	id, answer := e.solveCaptcha()
+	body := make(map[string]string, len(fields)+2)
+	maps.Copy(body, fields)
+	body["captchaId"] = id
+	body["captcha"] = answer
+	return body
 }
 
 type opt func(*http.Request)
@@ -167,9 +229,26 @@ func (e *env) upload(path, field, filename string, content []byte, tok string) r
 
 func (e *env) login(email string) (token string, refresh *http.Cookie) {
 	e.t.Helper()
-	r := e.do("POST", "/auth/login", map[string]string{"email": email, "password": password})
+	id, answer := e.solveCaptcha()
+	r := e.do("POST", "/auth/login", map[string]string{"login": email, "password": password, "captchaId": id, "captcha": answer})
 	if r.Code != 201 {
 		e.t.Fatalf("login %s: %d %s", email, r.Code, r.Raw)
+	}
+	for _, c := range r.Cookies {
+		if c.Name == "refresh_token" {
+			refresh = c
+		}
+	}
+	return r.data()["accessToken"].(string), refresh
+}
+
+// loginMitra logs in a mitra user with a solved captcha.
+func (e *env) loginMitra(kode, username string) (token string, refresh *http.Cookie) {
+	e.t.Helper()
+	id, answer := e.solveCaptcha()
+	r := e.do("POST", "/auth/login-mitra", map[string]string{"mitraKode": kode, "username": username, "password": password, "captchaId": id, "captcha": answer})
+	if r.Code != 201 {
+		e.t.Fatalf("login mitra %s/%s: %d %s", kode, username, r.Code, r.Raw)
 	}
 	for _, c := range r.Cookies {
 		if c.Name == "refresh_token" {
@@ -264,7 +343,9 @@ func TestRefreshRotationAndReuse(t *testing.T) {
 	expect(t, e.do("POST", "/auth/refresh", nil), 401, "MISSING_REFRESH_TOKEN")
 
 	// mobile clients get the token in the body
-	req := httptest.NewRequest("POST", "/api/v1/auth/login", strings.NewReader(`{"email":"u@test.local","password":"`+password+`"}`))
+	id, answer := e.solveCaptcha()
+	body := `{"login":"u@test.local","password":"` + password + `","captchaId":"` + id + `","captcha":"` + answer + `"}`
+	req := httptest.NewRequest("POST", "/api/v1/auth/login", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Client", "mobile")
 	m := e.send(req)
@@ -277,9 +358,76 @@ func TestRefreshRotationAndReuse(t *testing.T) {
 func TestLoginFailures(t *testing.T) {
 	e := setup(t)
 	e.seedUser("u@test.local")
-	expect(t, e.do("POST", "/auth/login", map[string]string{"email": "u@test.local", "password": "wrong-password"}), 401, "INVALID_CREDENTIALS")
-	expect(t, e.do("POST", "/auth/login", map[string]string{"email": "ghost@test.local", "password": password}), 401, "INVALID_CREDENTIALS")
-	expect(t, e.do("POST", "/auth/login", map[string]string{"email": "bad"}), 400, "VALIDATION_ERROR")
+	// Without a captcha id/answer the request is rejected by validation.
+	expect(t, e.do("POST", "/auth/login", map[string]string{"login": "u@test.local", "password": password}), 400, "VALIDATION_ERROR")
+	// Wrong password with a valid captcha is still the generic credential error.
+	id, answer := e.solveCaptcha()
+	expect(t, e.do("POST", "/auth/login", map[string]string{"login": "u@test.local", "password": "wrong-password", "captchaId": id, "captcha": answer}), 401, "INVALID_CREDENTIALS")
+	id, answer = e.solveCaptcha()
+	expect(t, e.do("POST", "/auth/login", map[string]string{"login": "ghost@test.local", "password": password, "captchaId": id, "captcha": answer}), 401, "INVALID_CREDENTIALS")
+	expect(t, e.do("POST", "/auth/login", map[string]string{"login": "bad"}), 400, "VALIDATION_ERROR")
+}
+
+// TestCaptchaLogin proves the Milestone 3 DoD on both login endpoints:
+// missing captcha rejected, expired rejected, single use enforced, correct
+// captcha accepted. A wrong answer never leaks which check failed.
+func TestCaptchaLogin(t *testing.T) {
+	e := setup(t)
+	e.seedUser("u@test.local")
+
+	// 1. Login without any captcha is rejected.
+	expect(t, e.do("POST", "/auth/login", map[string]string{"login": "u@test.local", "password": password}), 400, "VALIDATION_ERROR")
+	expect(t, e.do("POST", "/auth/login-mitra", map[string]string{"mitraKode": "MTR-001", "username": "u", "password": password}), 400, "VALIDATION_ERROR")
+
+	// 2. A wrong answer is the generic invalid-captcha error.
+	id, _ := e.solveCaptcha()
+	expect(t, e.do("POST", "/auth/login", map[string]string{"login": "u@test.local", "password": password, "captchaId": id, "captcha": "ZZZZZ"}), 401, "INVALID_CAPTCHA")
+
+	// 3. Single use: a correct captcha works once, then the same id fails.
+	id, answer := e.solveCaptcha()
+	expect(t, e.do("POST", "/auth/login", map[string]string{"login": "u@test.local", "password": password, "captchaId": id, "captcha": answer}), 201)
+	expect(t, e.do("POST", "/auth/login", map[string]string{"login": "u@test.local", "password": password, "captchaId": id, "captcha": answer}), 401, "INVALID_CAPTCHA")
+
+	// 4. Case-insensitive answer still succeeds.
+	id, answer = e.solveCaptcha()
+	expect(t, e.do("POST", "/auth/login", map[string]string{"login": "u@test.local", "password": password, "captchaId": id, "captcha": strings.ToLower(answer)}), 201)
+}
+
+// TestCaptchaExpired proves an aged-out challenge is refused even with the
+// right answer.
+func TestCaptchaExpired(t *testing.T) {
+	e := setupWith(t, expiredStore{}, captchaImage{})
+	e.seedUser("u@test.local")
+
+	id, answer := e.solveCaptcha()
+	expect(t, e.do("POST", "/auth/login", map[string]string{"login": "u@test.local", "password": password, "captchaId": id, "captcha": answer}), 401, "INVALID_CAPTCHA")
+}
+
+// TestCaptchaLoginMitra proves the mitra login also requires a captcha and
+// accepts the correct one.
+func TestCaptchaLoginMitra(t *testing.T) {
+	e := setup(t)
+	e.seedUser("mitra-user@test.local")
+	// A mitra row plus a user bound to it.
+	mitraID := kernel.NewID()
+	must(t, e.q.CreateMitra(context.Background(), store.CreateMitraParams{ID: mitraID, KodeMitra: "MTR-CAP", Nama: "Mitra Captcha", IsActive: true}))
+	username := "capstaff"
+	_, err := e.pool.Exec(context.Background(), `UPDATE "user" SET mitra_id = $1, username = $2 WHERE email = $3`, mitraID, username, "mitra-user@test.local")
+	must(t, err)
+
+	// No captcha rejected.
+	expect(t, e.do("POST", "/auth/login-mitra", map[string]string{"mitraKode": "MTR-CAP", "username": username, "password": password}), 400, "VALIDATION_ERROR")
+
+	// Correct captcha succeeds and the token carries mitra_id.
+	id, answer := e.solveCaptcha()
+	r := e.do("POST", "/auth/login-mitra", map[string]string{"mitraKode": "MTR-CAP", "username": username, "password": password, "captchaId": id, "captcha": answer})
+	expect(t, r, 201)
+	tok := r.data()["accessToken"].(string)
+	me := e.do("GET", "/auth/me", nil, bearer(tok))
+	expect(t, me, 200)
+	if me.data()["mitraId"] != mitraID || me.data()["mitraKode"] != "MTR-CAP" {
+		t.Fatalf("mitra token wrong: %s", me.Raw)
+	}
 }
 
 func TestRoleRequiredTwoFactorAndBackupCodes(t *testing.T) {
@@ -288,7 +436,7 @@ func TestRoleRequiredTwoFactorAndBackupCodes(t *testing.T) {
 	_, err := e.pool.Exec(context.Background(), `UPDATE role SET require_two_factor = true WHERE id = $1`, roleID)
 	must(t, err)
 
-	r := e.do("POST", "/auth/login", map[string]string{"email": "totp@test.local", "password": password})
+	r := e.do("POST", "/auth/login", e.loginFields(map[string]string{"login": "totp@test.local", "password": password}))
 	expect(t, r, 201)
 	d := r.data()
 	if d["requiresTwoFactor"] != true || d["setupRequired"] != true || len(r.Cookies) != 0 {
@@ -303,7 +451,7 @@ func TestRoleRequiredTwoFactorAndBackupCodes(t *testing.T) {
 	}
 
 	// second login: challenge without setup, finish with a backup code (single use)
-	r = e.do("POST", "/auth/login", map[string]string{"email": "totp@test.local", "password": password})
+	r = e.do("POST", "/auth/login", e.loginFields(map[string]string{"login": "totp@test.local", "password": password}))
 	ch := r.data()["challengeToken"].(string)
 	if r.data()["setupRequired"] != false || r.data()["manualKey"] != nil {
 		t.Fatalf("no setup expected: %s", r.Raw)
@@ -312,7 +460,7 @@ func TestRoleRequiredTwoFactorAndBackupCodes(t *testing.T) {
 	expect(t, r, 201)
 	tok := r.data()["accessToken"].(string)
 
-	r = e.do("POST", "/auth/login", map[string]string{"email": "totp@test.local", "password": password})
+	r = e.do("POST", "/auth/login", e.loginFields(map[string]string{"login": "totp@test.local", "password": password}))
 	expect(t, e.do("POST", "/auth/2fa/verify-backup", map[string]string{"challengeToken": r.data()["challengeToken"].(string), "backupCode": codes[0].(string)}), 401, "INVALID_TWO_FACTOR_CODE")
 
 	st := e.do("GET", "/account/two-factor", nil, bearer(tok))
@@ -346,7 +494,7 @@ func TestInviteAndPasswordReset(t *testing.T) {
 	msg = e.nextMail(n)
 	tok = tokenFrom(t, msg.Text)
 	expect(t, e.do("POST", "/auth/reset-password", map[string]string{"channel": "web", "token": tok, "newPassword": "NewPassword123!"}), 204)
-	expect(t, e.do("POST", "/auth/login", map[string]string{"email": "new@test.local", "password": "NewPassword123!"}), 201)
+	expect(t, e.do("POST", "/auth/login", e.loginFields(map[string]string{"login": "new@test.local", "password": "NewPassword123!"})), 201)
 
 	// mobile OTP
 	n = e.mail.Count()

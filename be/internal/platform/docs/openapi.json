@@ -577,6 +577,260 @@
         }
       ]
     },
+    "/api/v1/mitra": {
+      "get": {
+        "operationId": "MitraController_list",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid access token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission not granted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          }
+        },
+        "summary": "List mitra",
+        "tags": [
+          "Mitra"
+        ]
+      },
+      "post": {
+        "operationId": "MitraController_create",
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Kode mitra already taken",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Create a mitra",
+        "tags": [
+          "Mitra"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMitraRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mitra/{id}": {
+      "get": {
+        "operationId": "MitraController_get",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Mitra not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Get a mitra",
+        "tags": [
+          "Mitra"
+        ]
+      },
+      "put": {
+        "operationId": "MitraController_update",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Mitra not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Update a mitra",
+        "tags": [
+          "Mitra"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateMitraRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mitra/{id}/active": {
+      "patch": {
+        "operationId": "MitraController_setActive",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Mitra not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Activate or deactivate a mitra",
+        "tags": [
+          "Mitra"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MitraActiveRequest"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/users": {
       "get": {
         "operationId": "UsersController_list",
@@ -1794,6 +2048,98 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/auth/login-mitra": {
+      "post": {
+        "operationId": "AuthController_loginMitra",
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Login mitra with mitra code, username and password",
+        "tags": [
+          "Auth"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginMitraRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/captcha": {
+      "get": {
+        "operationId": "AuthController_captcha",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many captcha requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Issue a login captcha image",
+        "tags": [
+          "Auth"
+        ]
       }
     },
     "/api/v1/auth/2fa/verify": {
@@ -6043,19 +6389,96 @@
       "LoginRequest": {
         "type": "object",
         "required": [
-          "email",
-          "password"
+          "login",
+          "password",
+          "captchaId",
+          "captcha"
         ],
         "properties": {
-          "email": {
+          "login": {
             "type": "string",
-            "format": "email"
+            "description": "Superadmin username or email."
           },
           "password": {
             "type": "string",
             "format": "password",
             "minLength": 8,
             "maxLength": 128
+          },
+          "captchaId": {
+            "type": "string"
+          },
+          "captcha": {
+            "type": "string",
+            "description": "The characters shown in the captcha image."
+          }
+        }
+      },
+      "LoginMitraRequest": {
+        "type": "object",
+        "required": [
+          "mitraKode",
+          "username",
+          "password",
+          "captchaId",
+          "captcha"
+        ],
+        "properties": {
+          "mitraKode": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string",
+            "format": "password",
+            "minLength": 8,
+            "maxLength": 128
+          },
+          "captchaId": {
+            "type": "string"
+          },
+          "captcha": {
+            "type": "string",
+            "description": "The characters shown in the captcha image."
+          }
+        }
+      },
+      "CreateMitraRequest": {
+        "type": "object",
+        "required": [
+          "kodeMitra",
+          "nama"
+        ],
+        "properties": {
+          "kodeMitra": {
+            "type": "string"
+          },
+          "nama": {
+            "type": "string"
+          }
+        }
+      },
+      "UpdateMitraRequest": {
+        "type": "object",
+        "properties": {
+          "kodeMitra": {
+            "type": "string"
+          },
+          "nama": {
+            "type": "string"
+          }
+        }
+      },
+      "MitraActiveRequest": {
+        "type": "object",
+        "required": [
+          "isActive"
+        ],
+        "properties": {
+          "isActive": {
+            "type": "boolean"
           }
         }
       },

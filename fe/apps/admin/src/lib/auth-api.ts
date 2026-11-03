@@ -1,6 +1,8 @@
 import {
   AcceptInviteRequestSchema,
+  CaptchaSchema,
   ForgotPasswordRequestSchema,
+  LoginMitraRequestSchema,
   LoginResponseSchema,
   MeResponseSchema,
   RefreshResponseSchema,
@@ -9,7 +11,9 @@ import {
   TwoFactorVerifyRequestSchema,
   VerifyEmailRequestSchema,
   type AcceptInviteRequest,
+  type Captcha,
   type ForgotPasswordRequest,
+  type LoginMitraRequest,
   type LoginRequest,
   type LoginResponse,
   type MeResponse,
@@ -21,8 +25,27 @@ import {
 } from "@app/contracts"
 import { apiRequest } from "./api-client"
 
+/** Fetches a fresh captcha challenge. Never cached (server sends no-store). */
+export function getCaptcha(): Promise<Captcha> {
+  return apiRequest("/auth/captcha", {
+    schema: CaptchaSchema,
+    cache: "no-store",
+  })
+}
+
 export function login(credentials: LoginRequest): Promise<LoginResponse> {
   return apiRequest("/auth/login", {
+    method: "POST",
+    body: credentials,
+    schema: LoginResponseSchema,
+  })
+}
+
+export function loginMitra(
+  credentials: LoginMitraRequest
+): Promise<LoginResponse> {
+  LoginMitraRequestSchema.parse(credentials)
+  return apiRequest("/auth/login-mitra", {
     method: "POST",
     body: credentials,
     schema: LoginResponseSchema,

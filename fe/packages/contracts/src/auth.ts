@@ -2,10 +2,30 @@ import { z } from "zod"
 import { PasswordSchema as password } from "./security"
 
 export const LoginRequestSchema = z.object({
-  email: z.email(),
+  login: z.string().trim().min(1),
   password,
+  captchaId: z.string().min(1),
+  captcha: z.string().min(1).max(16),
 })
 export type LoginRequest = z.infer<typeof LoginRequestSchema>
+
+export const LoginMitraRequestSchema = z.object({
+  mitraKode: z.string().trim().min(1),
+  username: z.string().trim().min(1),
+  password,
+  captchaId: z.string().min(1),
+  captcha: z.string().min(1).max(16),
+})
+export type LoginMitraRequest = z.infer<typeof LoginMitraRequestSchema>
+
+/** Captcha challenge returned by GET /auth/captcha. The image is a PNG data
+ * URL; the plaintext code never leaves the server. */
+export const CaptchaSchema = z.object({
+  captchaId: z.string().min(1),
+  image: z.string().startsWith("data:image/png;base64,"),
+  expiresIn: z.number().int().positive(),
+})
+export type Captcha = z.infer<typeof CaptchaSchema>
 
 export const LoginResponseSchema = z.discriminatedUnion("requiresTwoFactor", [
   z.object({
@@ -23,6 +43,9 @@ export const LoginResponseSchema = z.discriminatedUnion("requiresTwoFactor", [
       id: z.uuid(),
       email: z.email(),
       roleId: z.uuid(),
+      mitraId: z.uuid().nullable().optional(),
+      mitraKode: z.string().nullable().optional(),
+      username: z.string().nullable().optional(),
     }),
     refreshToken: z.string().optional(),
     // Only present right after first-time 2FA setup; shown once.

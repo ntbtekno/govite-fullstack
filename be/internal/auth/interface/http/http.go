@@ -109,14 +109,18 @@ func deliver(c *fiber.Ctx, sess *domain.Session, ch *domain.Challenge) error {
 }
 
 type loginReq struct {
-	Login    string `json:"login" validate:"required,min=1"`
-	Password string `json:"password" validate:"required,password"`
+	Login     string `json:"login" validate:"required,min=1"`
+	Password  string `json:"password" validate:"required,password"`
+	CaptchaID string `json:"captchaId" validate:"required,min=1,max=128"`
+	Captcha   string `json:"captcha" validate:"required,min=1,max=16"`
 }
 
 type loginMitraReq struct {
 	MitraKode string `json:"mitraKode" validate:"required,min=1"`
 	Username  string `json:"username" validate:"required,min=1"`
 	Password  string `json:"password" validate:"required,password"`
+	CaptchaID string `json:"captchaId" validate:"required,min=1,max=128"`
+	Captcha   string `json:"captcha" validate:"required,min=1,max=16"`
 }
 
 type verifyReq struct {
@@ -172,11 +176,26 @@ func noContent(c *fiber.Ctx, err error) error {
 
 // Routes mounts /auth. loginLimit throttles credential endpoints separately
 // from the global limit, so loosening THROTTLE_LIMIT never loosens login.
-func (h Handler) Routes(r fiber.Router, loginLimit, refreshLimit fiber.Handler) {
+// captchaLimit caps how fast a bot can drain captcha challenges.
+func (h Handler) Routes(r fiber.Router, loginLimit, refreshLimit, captchaLimit fiber.Handler) {
 	g := r.Group("/auth")
 
+	// Public and cache-control: no-store so browsers never reuse a spent image.
+	g.Get("/captcha", captchaLimit, func(c *fiber.Ctx) error {
+		c.Set(fiber.HeaderCacheControl, "no-store")
+		cap, err := h.Svc.Captcha.Issue(c.UserContext())
+		if err != nil {
+			return err
+		}
+		return httpx.OK(c, fiber.Map{
+			"captchaId": cap.ID,
+			"image":     cap.Image,
+			"expiresIn": cap.ExpiresIn,
+		})
+	})
+
 	g.Post("/login", loginLimit, body(func(c *fiber.Ctx, b loginReq) error {
-		sess, ch, err := h.Svc.Login(c.UserContext(), b.Login, b.Password, client(c))
+		sess, ch, err := h.Svc.Login(c.UserContext(), b.Login, b.Password, b.CaptchaID, b.Captcha, client(c))
 		if err != nil {
 			return err
 		}
@@ -184,7 +203,7 @@ func (h Handler) Routes(r fiber.Router, loginLimit, refreshLimit fiber.Handler) 
 	}))
 
 	g.Post("/login-mitra", loginLimit, body(func(c *fiber.Ctx, b loginMitraReq) error {
-		sess, ch, err := h.Svc.LoginMitra(c.UserContext(), b.MitraKode, b.Username, b.Password, client(c))
+		sess, ch, err := h.Svc.LoginMitra(c.UserContext(), b.MitraKode, b.Username, b.Password, b.CaptchaID, b.Captcha, client(c))
 		if err != nil {
 			return err
 		}

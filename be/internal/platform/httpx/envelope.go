@@ -66,6 +66,7 @@ var messageInd = map[string]string{
 	"TOO_MANY_REQUESTS":            "Terlalu banyak percobaan, coba lagi nanti",
 	"MISSING_REFRESH_TOKEN":        "Refresh token tidak ditemukan",
 	"INVALID_CREDENTIALS":          "Email atau password salah",
+	"INVALID_CAPTCHA":              "Email/username atau password salah, atau captcha tidak valid",
 	"INVALID_REFRESH_TOKEN":        "Refresh token tidak valid atau sudah kedaluwarsa",
 	"REFRESH_TOKEN_REUSE_DETECTED": "Refresh token digunakan ulang; sesi dicabut",
 	"SESSION_USER_NOT_FOUND":       "Sesi pengguna tidak ditemukan atau tidak aktif",

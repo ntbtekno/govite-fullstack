@@ -4,13 +4,23 @@ import { click, render, submit } from "../../../test-utils"
 import { ApiError } from "../../../lib/api-client"
 
 const login = vi.fn()
+const loginMitra = vi.fn()
 const verifyTwoFactor = vi.fn()
 const verifyTwoFactorBackup = vi.fn()
+const getCaptcha = vi.fn()
 const navigate = vi.fn()
 const push = vi.fn()
 
 vi.mock("@/lib/auth-context", () => ({
-  useAuth: () => ({ login, verifyTwoFactor, verifyTwoFactorBackup }),
+  useAuth: () => ({
+    login,
+    loginMitra,
+    verifyTwoFactor,
+    verifyTwoFactorBackup,
+  }),
+}))
+vi.mock("@/lib/auth-api", () => ({
+  getCaptcha: () => getCaptcha(),
 }))
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children, to }: { children: React.ReactNode; to: string }) => (
@@ -20,29 +30,101 @@ vi.mock("@tanstack/react-router", () => ({
   useRouter: () => ({ history: { push } }),
 }))
 
+let captchaSeq = 0
+function nextCaptcha() {
+  captchaSeq += 1
+  return {
+    captchaId: `cap-${captchaSeq}`,
+    image: "data:image/png;base64,AAAA",
+    expiresIn: 120,
+  }
+}
+
 afterEach(() => {
+  captchaSeq = 0
   login.mockReset()
+  loginMitra.mockReset()
   verifyTwoFactor.mockReset()
   verifyTwoFactorBackup.mockReset()
+  getCaptcha.mockReset()
   navigate.mockReset()
   push.mockReset()
   document.body.replaceChildren()
 })
 
 describe("LoginForm", () => {
-  it("submits credentials and redirects", async () => {
+  it("submits credentials with a solved captcha and redirects", async () => {
+    getCaptcha.mockImplementation(async () => nextCaptcha())
     login.mockResolvedValue({ requiresTwoFactor: false })
     await render(<LoginForm redirectTo="/admin/users" />)
-    ;(document.querySelector("#email") as HTMLInputElement).value =
+    ;(document.querySelector("#login") as HTMLInputElement).value =
       "a@test.local"
     ;(document.querySelector("#password") as HTMLInputElement).value =
       "Password123!"
+    ;(document.querySelector("#captcha") as HTMLInputElement).value = "AB123"
     await submit(document.querySelector("form")!)
-    expect(login).toHaveBeenCalledWith("a@test.local", "Password123!")
+    expect(login).toHaveBeenCalledWith(
+      "a@test.local",
+      "Password123!",
+      expect.stringMatching(/^cap-\d+$/),
+      "AB123"
+    )
     expect(push).toHaveBeenCalledWith("/admin/users")
   })
 
+  it("reloads the captcha after a failed login", async () => {
+    getCaptcha.mockImplementation(async () => nextCaptcha())
+    login.mockRejectedValue(new ApiError(401, "INVALID_CAPTCHA", "Invalid"))
+    await render(<LoginForm />)
+    ;(document.querySelector("#login") as HTMLInputElement).value = "a@test.local"
+    ;(document.querySelector("#password") as HTMLInputElement).value =
+      "Password123!"
+    ;(document.querySelector("#captcha") as HTMLInputElement).value = "WRONG"
+    await submit(document.querySelector("form")!)
+    // At least the initial load plus one reload after the failure.
+    expect(getCaptcha.mock.calls.length).toBeGreaterThanOrEqual(2)
+    expect(login).toHaveBeenCalledWith(
+      "a@test.local",
+      "Password123!",
+      expect.any(String),
+      "WRONG"
+    )
+    const nextSubmit = document.querySelector("form")!
+    ;(document.querySelector("#password") as HTMLInputElement).value =
+      "Password123!"
+    ;(document.querySelector("#captcha") as HTMLInputElement).value = "AB123"
+    await submit(nextSubmit)
+    const firstCall = login.mock.calls[0]
+    const lastCall = login.mock.calls[login.mock.calls.length - 1]
+    // The captcha id changed after the reload, and the new answer is sent.
+    expect(firstCall[3]).toBe("WRONG")
+    expect(lastCall[1]).toBe("Password123!")
+    expect(lastCall[3]).toBe("AB123")
+    expect(lastCall[2]).not.toBe(firstCall[2])
+  })
+
+  it("renders the mitra variant with kode and username fields", async () => {
+    getCaptcha.mockImplementation(async () => nextCaptcha())
+    loginMitra.mockResolvedValue({ requiresTwoFactor: false })
+    await render(<LoginForm variant="mitra" redirectTo="/admin/dashboard" />)
+    ;(document.querySelector("#mitraKode") as HTMLInputElement).value = "MTR-001"
+    ;(document.querySelector("#username") as HTMLInputElement).value = "admin"
+    ;(document.querySelector("#password") as HTMLInputElement).value =
+      "Password123!"
+    ;(document.querySelector("#captcha") as HTMLInputElement).value = "AB123"
+    await submit(document.querySelector("form")!)
+    expect(loginMitra).toHaveBeenCalledWith(
+      "MTR-001",
+      "admin",
+      "Password123!",
+      expect.stringMatching(/^cap-\d+$/),
+      "AB123"
+    )
+    expect(push).toHaveBeenCalledWith("/admin/dashboard")
+  })
+
   it("submits two-factor code after password challenge", async () => {
+    getCaptcha.mockImplementation(async () => nextCaptcha())
     login.mockResolvedValue({
       requiresTwoFactor: true,
       challengeToken: "challenge",
@@ -55,10 +137,11 @@ describe("LoginForm", () => {
       backupCodes: ["11111-11111", "22222-22222"],
     })
     await render(<LoginForm redirectTo="/admin/users" />)
-    ;(document.querySelector("#email") as HTMLInputElement).value =
+    ;(document.querySelector("#login") as HTMLInputElement).value =
       "a@test.local"
     ;(document.querySelector("#password") as HTMLInputElement).value =
       "Password123!"
+    ;(document.querySelector("#captcha") as HTMLInputElement).value = "AB123"
     await submit(document.querySelector("form")!)
     expect(document.body.textContent).toContain("SECRET")
     expect(document.querySelector("svg")).not.toBeNull()
@@ -79,6 +162,7 @@ describe("LoginForm", () => {
   })
 
   it("logs in with a backup code when authenticator is unavailable", async () => {
+    getCaptcha.mockImplementation(async () => nextCaptcha())
     login.mockResolvedValue({
       requiresTwoFactor: true,
       challengeToken: "challenge",
@@ -86,10 +170,11 @@ describe("LoginForm", () => {
     })
     verifyTwoFactorBackup.mockResolvedValue({ requiresTwoFactor: false })
     await render(<LoginForm redirectTo="/admin/users" />)
-    ;(document.querySelector("#email") as HTMLInputElement).value =
+    ;(document.querySelector("#login") as HTMLInputElement).value =
       "a@test.local"
     ;(document.querySelector("#password") as HTMLInputElement).value =
       "Password123!"
+    ;(document.querySelector("#captcha") as HTMLInputElement).value = "AB123"
     await submit(document.querySelector("form")!)
     await click(document.querySelector("button[type=button]")!)
     ;(document.querySelector("#backupCode") as HTMLInputElement).value =
@@ -103,15 +188,17 @@ describe("LoginForm", () => {
   })
 
   it("shows throttled error and clears password", async () => {
+    getCaptcha.mockImplementation(async () => nextCaptcha())
     login.mockRejectedValue(new ApiError(429, undefined, "Too many"))
     await render(<LoginForm />)
     const password = document.querySelector("#password") as HTMLInputElement
-    ;(document.querySelector("#email") as HTMLInputElement).value =
+    ;(document.querySelector("#login") as HTMLInputElement).value =
       "a@test.local"
     password.value = "Password123!"
+    ;(document.querySelector("#captcha") as HTMLInputElement).value = "AB123"
     await submit(document.querySelector("form")!)
     expect(document.querySelector('[role="alert"]')?.textContent).toContain(
-      "Too many attempts"
+      "Terlalu banyak percobaan"
     )
     expect(password.value).toBe("")
   })

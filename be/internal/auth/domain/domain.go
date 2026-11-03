@@ -22,7 +22,22 @@ var (
 	ErrTOTPNotEnabled     = kernel.E(kernel.Conflict, "TWO_FACTOR_NOT_ENABLED", "Two-factor authentication is not enabled")
 	ErrTOTPRequired       = kernel.E(kernel.Forbidden, "TWO_FACTOR_REQUIRED", "Your role requires two-factor authentication")
 	ErrSessionNotFound    = kernel.E(kernel.NotFound, "SESSION_NOT_FOUND", "Session not found")
+	// ErrInvalidCaptcha is returned when a captcha is wrong, expired or already
+	// used. Login responses must render the same generic message as a bad
+	// password, so the caller never learns which check failed.
+	ErrInvalidCaptcha = kernel.E(kernel.Unauthenticated, "INVALID_CAPTCHA", "Email/username atau password salah, atau captcha tidak valid.")
+	// ErrCaptchaExpired is internal only; the login response stays generic.
+	ErrCaptchaExpired = kernel.E(kernel.Unauthenticated, "CAPTCHA_EXPIRED", "Captcha is invalid or expired")
 )
+
+// Captcha is a generated challenge: the id the client sends back and the
+// PNG data URL shown in the form. The plaintext code never leaves the
+// server; only its hash is stored.
+type Captcha struct {
+	ID        string
+	Image     string
+	ExpiresIn int
+}
 
 // ErrLoginInvalid is the generic login/mitra failure message. Never
 // distinguish between invalid email, username, password, or mitra.
@@ -176,6 +191,23 @@ type OTP interface {
 	Generate(account string) (secret string, err error)
 	URL(account, secret string) string
 	Validate(code, secret string) bool
+}
+
+// CaptchaStore keeps captcha hashes until they expire. Redis backs it when
+// configured, otherwise an in-memory store is used. Values are hashes, never
+// the plaintext code.
+type CaptchaStore interface {
+	// Put stores hash under id for ttl. It replaces any previous value.
+	Put(ctx context.Context, id, hash string, ttl time.Duration) error
+	// Take returns the stored hash and deletes it in one step (single use).
+	// Missing or expired ids return kernel.ErrNotFound.
+	Take(ctx context.Context, id string) (hash string, err error)
+}
+
+// CaptchaImage renders the challenge code as a PNG data URL.
+type CaptchaImage interface {
+	// Render returns "data:image/png;base64,..." for code.
+	Render(code string) (string, error)
 }
 
 // Mailer sends the auth emails; copy and layout live in the adapter.

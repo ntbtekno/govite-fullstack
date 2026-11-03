@@ -17,6 +17,7 @@ import (
 	auditinfra "govite/internal/audit/infrastructure"
 	audithttp "govite/internal/audit/interface/http"
 	authapp "govite/internal/auth/application"
+	authdomain "govite/internal/auth/domain"
 	authinfra "govite/internal/auth/infrastructure"
 	authhttp "govite/internal/auth/interface/http"
 	filesapp "govite/internal/files/application"
@@ -62,6 +63,12 @@ type Deps struct {
 	Mail  mail.Sender
 	Files *storage.Store // nil when object storage is not configured
 	Push  fcm.Pusher     // nil when Firebase is not configured
+	// CaptchaStore overrides where captcha challenges are kept. Tests inject a
+	// store they can read back; production leaves it nil for Redis/in-memory.
+	CaptchaStore authdomain.CaptchaStore
+	// CaptchaImage overrides the renderer. Tests inject one that exposes the
+	// code so the challenge can be solved without OCR.
+	CaptchaImage authdomain.CaptchaImage
 }
 
 // Settings reads the app settings without a full server, e.g. for the mail brand.
@@ -100,6 +107,26 @@ type handlers struct {
 	mitra         mitrahttp.Handler
 }
 
+// captchaStoreOr picks an override, else Redis when configured, else the
+// in-memory fallback. The port is the same, so the auth feature never sees
+// the difference.
+func captchaStoreOr(override authdomain.CaptchaStore, r *redis.Client) authdomain.CaptchaStore {
+	if override != nil {
+		return override
+	}
+	if r != nil {
+		return authinfra.CaptchaRedis{Client: r}
+	}
+	return authinfra.NewCaptchaMemory()
+}
+
+func captchaImageOr(override authdomain.CaptchaImage) authdomain.CaptchaImage {
+	if override != nil {
+		return override
+	}
+	return authinfra.CaptchaPNG{}
+}
+
 func wire(d Deps) (handlers, *sysapp.Service) {
 	db := postgres.New(d.Pool)
 	keys := crypto.NewKeys(d.Cfg.JWTSecret, d.Cfg.RefreshPepper)
@@ -117,6 +144,7 @@ func wire(d Deps) (handlers, *sysapp.Service) {
 	auth := &authapp.Service{
 		Repo: authinfra.Repository{DB: db}, Crypto: authinfra.Crypto{Keys: keys}, OTP: authinfra.TOTP{},
 		Mail: authinfra.Mailer{Sender: d.Mail}, Tx: db, Audit: auditor, WebURL: d.Cfg.WebURL,
+		Captcha: &authapp.Captcha{Store: captchaStoreOr(d.CaptchaStore, d.Redis), Image: captchaImageOr(d.CaptchaImage), Crypto: authinfra.Crypto{Keys: keys}},
 	}
 
 	var pusher notifydomain.Pusher

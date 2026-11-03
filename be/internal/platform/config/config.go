@@ -26,6 +26,7 @@ type Config struct {
 	SMTPFrom                   string
 	ThrottleLimit              int
 	LoginThrottleLimit         int
+	CaptchaThrottleLimit       int
 	LogLevel                   string
 	SuperAdminEmail            string
 	SuperAdminPassword         string
@@ -92,6 +93,7 @@ func Load() (Config, error) {
 		SMTPFrom:                   str("SMTP_FROM", "noreply@app.local"),
 		ThrottleLimit:              num("THROTTLE_LIMIT", 100),
 		LoginThrottleLimit:         num("LOGIN_THROTTLE_LIMIT", 10),
+		CaptchaThrottleLimit:       num("CAPTCHA_THROTTLE_LIMIT", 30),
 		LogLevel:                   str("LOG_LEVEL", "info"),
 		SuperAdminEmail:            strings.ToLower(str("SUPER_ADMIN_EMAIL", "")),
 		SuperAdminPassword:         str("SUPER_ADMIN_PASSWORD", ""),

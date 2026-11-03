@@ -8,12 +8,23 @@ import { Label } from "@app/ui/components/label"
 import { useAuth } from "@/lib/auth-context"
 import { ApiError } from "@/lib/api-client"
 import { BackupCodes } from "./backup-codes"
+import { CaptchaField, type CaptchaFieldHandle } from "./captcha-field"
 
-export function LoginForm({ redirectTo }: { redirectTo?: string }) {
-  const { login, verifyTwoFactor, verifyTwoFactorBackup } = useAuth()
+/** admin = Superadmin (username/email), mitra = mitra login (kode + username). */
+export type LoginVariant = "admin" | "mitra"
+
+export function LoginForm({
+  redirectTo,
+  variant = "admin",
+}: {
+  redirectTo?: string
+  variant?: LoginVariant
+}) {
+  const { login, loginMitra, verifyTwoFactor, verifyTwoFactorBackup } = useAuth()
   const navigate = useNavigate()
   const router = useRouter()
   const passwordRef = useRef<HTMLInputElement>(null)
+  const captchaRef = useRef<CaptchaFieldHandle>(null)
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
   const [useBackup, setUseBackup] = useState(false)
@@ -35,11 +46,24 @@ export function LoginForm({ redirectTo }: { redirectTo?: string }) {
     const form = new FormData(e.currentTarget)
     setError(null)
     setPending(true)
+    const captchaId = captchaRef.current?.id() ?? ""
+    const captcha = String(form.get("captcha"))
     try {
-      const result = await login(
-        String(form.get("email")),
-        String(form.get("password"))
-      )
+      const result =
+        variant === "mitra"
+          ? await loginMitra(
+              String(form.get("mitraKode")),
+              String(form.get("username")),
+              String(form.get("password")),
+              captchaId,
+              captcha
+            )
+          : await login(
+              String(form.get("login")),
+              String(form.get("password")),
+              captchaId,
+              captcha
+            )
       if (result.requiresTwoFactor) {
         setChallenge({
           token: result.challengeToken,
@@ -53,10 +77,13 @@ export function LoginForm({ redirectTo }: { redirectTo?: string }) {
     } catch (err) {
       setError(
         err instanceof ApiError && err.status === 429
-          ? "Too many attempts. Try again in a minute."
-          : "Incorrect email or password."
+          ? "Terlalu banyak percobaan. Coba lagi sebentar lagi."
+          : "Username/email atau password salah, atau captcha tidak valid."
       )
       if (passwordRef.current) passwordRef.current.value = ""
+      // A captcha is single use: reload it after every failure so the user is
+      // never asked to reuse a burned image.
+      void captchaRef.current?.reload()
     } finally {
       setPending(false)
     }
@@ -79,7 +106,7 @@ export function LoginForm({ redirectTo }: { redirectTo?: string }) {
       if (result.backupCodes?.length) setBackupCodes(result.backupCodes)
       else await finish()
     } catch {
-      setError(useBackup ? "Invalid backup code." : "Invalid two-factor code.")
+      setError(useBackup ? "Kode backup salah." : "Kode dua faktor salah.")
     } finally {
       setPending(false)
     }
@@ -169,17 +196,41 @@ export function LoginForm({ redirectTo }: { redirectTo?: string }) {
 
   return (
     <form onSubmit={onSubmit} className="space-y-4">
-      <div className="space-y-1.5">
-        <Label htmlFor="email">Email</Label>
-        <Input
-          id="email"
-          name="email"
-          type="email"
-          autoComplete="email"
-          placeholder="name@company.com"
-          required
-        />
-      </div>
+      {variant === "mitra" ? (
+        <>
+          <div className="space-y-1.5">
+            <Label htmlFor="mitraKode">Kode Mitra</Label>
+            <Input
+              id="mitraKode"
+              name="mitraKode"
+              autoComplete="off"
+              placeholder="MTR-001"
+              required
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="username">Username</Label>
+            <Input
+              id="username"
+              name="username"
+              autoComplete="username"
+              placeholder="admin-mitra"
+              required
+            />
+          </div>
+        </>
+      ) : (
+        <div className="space-y-1.5">
+          <Label htmlFor="login">Username atau Email</Label>
+          <Input
+            id="login"
+            name="login"
+            autoComplete="username"
+            placeholder="name@company.com"
+            required
+          />
+        </div>
+      )}
       <div className="space-y-1.5">
         <div className="flex items-center justify-between">
           <Label htmlFor="password">Password</Label>
@@ -204,6 +255,7 @@ export function LoginForm({ redirectTo }: { redirectTo?: string }) {
           aria-describedby={error ? "login-error" : undefined}
         />
       </div>
+      <CaptchaField ref={captchaRef} error={!!error} />
       {error && (
         <p id="login-error" role="alert" className="text-sm text-destructive">
           {error}

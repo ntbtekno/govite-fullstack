@@ -63,6 +63,12 @@ func New(d Deps) (*fiber.App, *sysapp.Service) {
 		Max: 6 * d.Cfg.LoginThrottleLimit, Expiration: time.Minute, Storage: store, LimitReached: tooMany,
 		KeyGenerator: func(c *fiber.Ctx) string { return "refresh:" + c.IP() },
 	})
+	// Captcha issuance is throttled on its own bucket so a bot cannot drain
+	// challenges unbounded, independently of the login limit.
+	captchaLimit := limiter.New(limiter.Config{
+		Max: d.Cfg.CaptchaThrottleLimit, Expiration: time.Minute, Storage: store, LimitReached: tooMany,
+		KeyGenerator: func(c *fiber.Ctx) string { return "captcha:" + c.IP() },
+	})
 	webhookLimit := limiter.New(limiter.Config{
 		Max: d.Cfg.WebhookThrottleLimit, Expiration: time.Minute, Storage: store, LimitReached: tooMany,
 		KeyGenerator: func(c *fiber.Ctx) string { return "webhook:" + c.IP() },
@@ -75,7 +81,7 @@ func New(d Deps) (*fiber.App, *sysapp.Service) {
 	h.system.PublicRoutes(api)
 	h.settings.PublicRoutes(api)
 	h.integrations.PublicRoutes(api, webhookLimit)
-	h.auth.Routes(api, loginLimit, refreshLimit)
+	h.auth.Routes(api, loginLimit, refreshLimit, captchaLimit)
 
 	// Signed in, no permission: self-service.
 	me := api.Group("", h.auth.Authenticate)
