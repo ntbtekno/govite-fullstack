@@ -24,6 +24,10 @@ var (
 	ErrSessionNotFound    = kernel.E(kernel.NotFound, "SESSION_NOT_FOUND", "Session not found")
 )
 
+// ErrLoginInvalid is the generic login/mitra failure message. Never
+// distinguish between invalid email, username, password, or mitra.
+var ErrLoginInvalid = kernel.E(kernel.Unauthenticated, "INVALID_CREDENTIALS", "Email/username atau password salah, atau captcha tidak valid.")
+
 // One-time token purposes and channels.
 const (
 	PurposeTwoFactor     = "two_factor"
@@ -44,6 +48,15 @@ type User struct {
 	AvatarKey       *string
 	IsActive        bool
 	EmailVerifiedAt *time.Time
+	Username        *string
+	MitraID         *string
+	MitraKode       *string
+}
+
+type MitraInfo struct {
+	ID        string
+	KodeMitra string
+	IsActive  bool
 }
 
 // CanAuthenticate: active and has accepted the invite (has a password).
@@ -103,6 +116,9 @@ func (t TwoFactor) Enabled() bool { return t.EnabledAt != nil }
 type Repository interface {
 	UserByEmail(ctx context.Context, email string) (User, error)
 	UserByID(ctx context.Context, id string) (User, error)
+	UserByUsername(ctx context.Context, username string) (User, error)
+	UserByUsernameAndMitra(ctx context.Context, username, mitraID string) (User, error)
+	MitraByKode(ctx context.Context, kode string) (MitraInfo, error)
 	// UserWithRole also fills RoleName.
 	UserWithRole(ctx context.Context, id string) (User, error)
 	RoleRequiresTwoFactor(ctx context.Context, roleID string) (bool, error)
@@ -149,7 +165,7 @@ type Crypto interface {
 	SHA256(v string) string
 	Encrypt(plain string) string
 	Decrypt(enc string) (string, error)
-	SignAccess(userID, roleID, sessionID string) (token string, expiresIn int, err error)
+	SignAccess(userID, roleID, mitraID, sessionID string) (token string, expiresIn int, err error)
 	ParseAccess(token string) (kernel.Principal, error)
 	Token(bytes int) string
 	Digits(n int) string

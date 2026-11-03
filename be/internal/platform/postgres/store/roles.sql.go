@@ -325,9 +325,9 @@ func (q *Queries) UpsertRolePermission(ctx context.Context, arg UpsertRolePermis
 }
 
 const upsertSuperAdmin = `-- name: UpsertSuperAdmin :exec
-INSERT INTO "user" (id, email, full_name, role_id, password_hash, email_verified_at)
-VALUES ($1, $2, 'Super Admin', $3, $4, now())
-ON CONFLICT (email) DO UPDATE SET role_id = EXCLUDED.role_id, is_active = true
+INSERT INTO "user" (id, email, full_name, role_id, password_hash, username, email_verified_at)
+VALUES ($1, $2, 'Super Admin', $3, $4, $5, now())
+ON CONFLICT (email) DO UPDATE SET role_id = EXCLUDED.role_id, is_active = true, username = COALESCE(EXCLUDED.username, "user".username)
 `
 
 type UpsertSuperAdminParams struct {
@@ -335,6 +335,7 @@ type UpsertSuperAdminParams struct {
 	Email        string
 	RoleID       string
 	PasswordHash *string
+	Username     *string
 }
 
 func (q *Queries) UpsertSuperAdmin(ctx context.Context, arg UpsertSuperAdminParams) error {
@@ -343,6 +344,7 @@ func (q *Queries) UpsertSuperAdmin(ctx context.Context, arg UpsertSuperAdminPara
 		arg.Email,
 		arg.RoleID,
 		arg.PasswordHash,
+		arg.Username,
 	)
 	return err
 }

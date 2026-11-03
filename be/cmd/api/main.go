@@ -203,7 +203,7 @@ func seed(ctx context.Context, cfg config.Config, q *store.Queries) error {
 	if err != nil {
 		return err
 	}
-	if err := q.UpsertSuperAdmin(ctx, store.UpsertSuperAdminParams{ID: kernel.NewID(), Email: cfg.SuperAdminEmail, RoleID: SuperAdminRoleID, PasswordHash: &hash}); err != nil {
+	if err := q.UpsertSuperAdmin(ctx, store.UpsertSuperAdminParams{ID: kernel.NewID(), Email: cfg.SuperAdminEmail, RoleID: SuperAdminRoleID, PasswordHash: &hash, Username: kernel.Ptr(cfg.SuperAdminUsername)}); err != nil {
 		return err
 	}
 	slog.Info("seed done", "permissions", len(keys), "superAdmin", cfg.SuperAdminEmail)

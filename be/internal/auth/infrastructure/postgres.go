@@ -15,12 +15,30 @@ import (
 type Repository struct{ DB *postgres.DB }
 
 func toUser(u store.User, role string) domain.User {
-	return domain.User{ID: u.ID, Email: u.Email, FullName: u.FullName, RoleID: u.RoleID, RoleName: role, PasswordHash: u.PasswordHash, AvatarKey: u.AvatarKey, IsActive: u.IsActive, EmailVerifiedAt: u.EmailVerifiedAt}
+	return domain.User{ID: u.ID, Email: u.Email, FullName: u.FullName, RoleID: u.RoleID, RoleName: role, PasswordHash: u.PasswordHash, AvatarKey: u.AvatarKey, IsActive: u.IsActive, EmailVerifiedAt: u.EmailVerifiedAt, Username: u.Username, MitraID: u.MitraID}
 }
 
 func (r Repository) UserByEmail(ctx context.Context, email string) (domain.User, error) {
 	u, err := r.DB.Q(ctx).GetUserByEmail(ctx, email)
 	return toUser(u, ""), postgres.Err(err)
+}
+
+func (r Repository) UserByUsername(ctx context.Context, username string) (domain.User, error) {
+	u, err := r.DB.Q(ctx).GetUserByUsername(ctx, &username)
+	return toUser(u, ""), postgres.Err(err)
+}
+
+func (r Repository) UserByUsernameAndMitra(ctx context.Context, username, mitraID string) (domain.User, error) {
+	u, err := r.DB.Q(ctx).GetUserByUsernameAndMitra(ctx, store.GetUserByUsernameAndMitraParams{Username: &username, MitraID: &mitraID})
+	return toUser(u, ""), postgres.Err(err)
+}
+
+func (r Repository) MitraByKode(ctx context.Context, kode string) (domain.MitraInfo, error) {
+	m, err := r.DB.Q(ctx).GetMitraByKode(ctx, kode)
+	if err != nil {
+		return domain.MitraInfo{}, postgres.Err(err)
+	}
+	return domain.MitraInfo{ID: m.ID, KodeMitra: m.KodeMitra, IsActive: m.IsActive}, nil
 }
 
 func (r Repository) UserByID(ctx context.Context, id string) (domain.User, error) {
@@ -30,7 +48,7 @@ func (r Repository) UserByID(ctx context.Context, id string) (domain.User, error
 
 func (r Repository) UserWithRole(ctx context.Context, id string) (domain.User, error) {
 	u, err := r.DB.Q(ctx).GetUser(ctx, id)
-	return toUser(u.User, u.RoleName), postgres.Err(err)
+	return domain.User{ID: u.User.ID, Email: u.User.Email, FullName: u.User.FullName, RoleID: u.User.RoleID, RoleName: u.RoleName, PasswordHash: u.User.PasswordHash, AvatarKey: u.User.AvatarKey, IsActive: u.User.IsActive, EmailVerifiedAt: u.User.EmailVerifiedAt, Username: u.User.Username, MitraID: u.User.MitraID, MitraKode: u.KodeMitra}, postgres.Err(err)
 }
 
 func (r Repository) RoleRequiresTwoFactor(ctx context.Context, roleID string) (bool, error) {

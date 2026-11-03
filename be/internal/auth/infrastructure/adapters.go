@@ -26,8 +26,8 @@ func (c Crypto) Decrypt(e string) (string, error)    { return c.Keys.Decrypt(e) 
 func (Crypto) Token(n int) string                    { return crypto.RandomToken(n) }
 func (Crypto) Digits(n int) string                   { return crypto.RandomDigits(n) }
 
-func (c Crypto) SignAccess(userID, roleID, sid string) (string, int, error) {
-	return c.Keys.SignAccess(userID, roleID, sid)
+func (c Crypto) SignAccess(userID, roleID, mitraID, sid string) (string, int, error) {
+	return c.Keys.SignAccess(userID, roleID, mitraID, sid)
 }
 
 func (c Crypto) ParseAccess(token string) (kernel.Principal, error) {
@@ -35,7 +35,7 @@ func (c Crypto) ParseAccess(token string) (kernel.Principal, error) {
 	if err != nil {
 		return kernel.Principal{}, err
 	}
-	return kernel.Principal{ID: cl.Subject, RoleID: cl.RoleID, SessionID: cl.SID}, nil
+	return kernel.Principal{ID: cl.Subject, RoleID: cl.RoleID, SessionID: cl.SID, MitraID: cl.MitraID}, nil
 }
 
 const totpIssuer = "Rekanara"

@@ -87,13 +87,14 @@ func (q *Queries) ExistingEmails(ctx context.Context, emails []string) ([]string
 }
 
 const getUser = `-- name: GetUser :one
-SELECT u.id, u.role_id, u.email, u.full_name, u.password_hash, u.avatar_key, u.is_active, u.email_verified_at, u.deleted_at, u.notification_push_enabled, u.last_login_at, u.created_at, u.username, u.mitra_id, r.name AS role_name
-FROM "user" u JOIN role r ON r.id = u.role_id WHERE u.id = $1
+SELECT u.id, u.role_id, u.email, u.full_name, u.password_hash, u.avatar_key, u.is_active, u.email_verified_at, u.deleted_at, u.notification_push_enabled, u.last_login_at, u.created_at, u.username, u.mitra_id, r.name AS role_name, m.kode_mitra
+FROM "user" u JOIN role r ON r.id = u.role_id LEFT JOIN mitra m ON m.id = u.mitra_id WHERE u.id = $1
 `
 
 type GetUserRow struct {
-	User     User
-	RoleName string
+	User      User
+	RoleName  string
+	KodeMitra *string
 }
 
 func (q *Queries) GetUser(ctx context.Context, id string) (GetUserRow, error) {
@@ -115,6 +116,7 @@ func (q *Queries) GetUser(ctx context.Context, id string) (GetUserRow, error) {
 		&i.User.Username,
 		&i.User.MitraID,
 		&i.RoleName,
+		&i.KodeMitra,
 	)
 	return i, err
 }

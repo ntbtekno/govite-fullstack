@@ -64,6 +64,6 @@ INSERT INTO role_permission (id, role_id, resource, action, scope) VALUES ($1, $
 ON CONFLICT (role_id, resource, action) DO UPDATE SET scope = EXCLUDED.scope;
 
 -- name: UpsertSuperAdmin :exec
-INSERT INTO "user" (id, email, full_name, role_id, password_hash, email_verified_at)
-VALUES ($1, $2, 'Super Admin', $3, $4, now())
-ON CONFLICT (email) DO UPDATE SET role_id = EXCLUDED.role_id, is_active = true;
+INSERT INTO "user" (id, email, full_name, role_id, password_hash, username, email_verified_at)
+VALUES ($1, $2, 'Super Admin', $3, $4, sqlc.narg(username), now())
+ON CONFLICT (email) DO UPDATE SET role_id = EXCLUDED.role_id, is_active = true, username = COALESCE(EXCLUDED.username, "user".username);

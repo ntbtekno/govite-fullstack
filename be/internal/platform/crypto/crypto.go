@@ -106,16 +106,17 @@ func (k Keys) Decrypt(enc string) (string, error) {
 }
 
 type Claims struct {
-	RoleID string `json:"roleId"`
-	SID    string `json:"sid,omitempty"`
+	RoleID  string `json:"roleId"`
+	MitraID string `json:"mitraId,omitempty"`
+	SID     string `json:"sid,omitempty"`
 	jwt.RegisteredClaims
 }
 
-func (k Keys) SignAccess(userID, roleID, sid string) (string, int, error) {
+func (k Keys) SignAccess(userID, roleID, mitraID, sid string) (string, int, error) {
 	ttl := policy.Security.AccessTokenTTL
 	now := time.Now()
 	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, Claims{
-		RoleID: roleID, SID: sid,
+		RoleID: roleID, MitraID: mitraID, SID: sid,
 		RegisteredClaims: jwt.RegisteredClaims{Subject: userID, IssuedAt: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(now.Add(ttl))},
 	})
 	s, err := tok.SignedString(k.jwt)

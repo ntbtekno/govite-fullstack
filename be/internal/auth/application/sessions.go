@@ -39,10 +39,17 @@ func (s *Service) Authenticate(token string) (kernel.Principal, error) {
 func (s *Service) HashPassword(plain string) (string, error) { return s.Crypto.HashPassword(plain) }
 
 // Login verifies the password; returns a session or a 2FA challenge.
-func (s *Service) Login(ctx context.Context, email, password string, cl domain.Client) (*domain.Session, *domain.Challenge, error) {
-	u, err := s.Repo.UserByEmail(ctx, normEmail(email))
+// login may be an email (contains @) or a username.
+func (s *Service) Login(ctx context.Context, login, password string, cl domain.Client) (*domain.Session, *domain.Challenge, error) {
+	var u domain.User
+	var err error
+	if norm, ok := isEmail(login); ok {
+		u, err = s.Repo.UserByEmail(ctx, norm)
+	} else {
+		u, err = s.Repo.UserByUsername(ctx, login)
+	}
 	if notFound(err) || (err == nil && !u.CanAuthenticate()) {
-		s.Crypto.BurnPassword(password) // same cost as a real miss
+		s.Crypto.BurnPassword(password)
 		return nil, nil, domain.ErrInvalidCredentials
 	}
 	if err != nil {
@@ -50,6 +57,52 @@ func (s *Service) Login(ctx context.Context, email, password string, cl domain.C
 	}
 	if !s.Crypto.VerifyPassword(*u.PasswordHash, password) {
 		return nil, nil, domain.ErrInvalidCredentials
+	}
+	required, err := s.Repo.RoleRequiresTwoFactor(ctx, u.RoleID)
+	if err != nil {
+		return nil, nil, err
+	}
+	tf, err := s.Repo.TwoFactor(ctx, u.ID)
+	if err != nil && !notFound(err) {
+		return nil, nil, err
+	}
+	if required || (err == nil && tf.Enabled()) {
+		ch, err := s.challenge(ctx, u)
+		return nil, ch, err
+	}
+	sess, err := s.issueSession(ctx, u, cl)
+	return sess, nil, err
+}
+
+func isEmail(login string) (string, bool) {
+	if strings.Contains(login, "@") {
+		return normEmail(login), true
+	}
+	return "", false
+}
+
+// LoginMitra verifies mitraKode, username and password. The
+// returned error is always generic — the caller must never
+// distinguish between wrong mitra, username, or password.
+func (s *Service) LoginMitra(ctx context.Context, mitraKode, username, password string, cl domain.Client) (*domain.Session, *domain.Challenge, error) {
+	m, err := s.Repo.MitraByKode(ctx, mitraKode)
+	if notFound(err) || (err == nil && !m.IsActive) {
+		s.Crypto.BurnPassword(password)
+		return nil, nil, domain.ErrLoginInvalid
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	u, err := s.Repo.UserByUsernameAndMitra(ctx, username, m.ID)
+	if notFound(err) || (err == nil && !u.CanAuthenticate()) {
+		s.Crypto.BurnPassword(password)
+		return nil, nil, domain.ErrLoginInvalid
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	if !s.Crypto.VerifyPassword(*u.PasswordHash, password) {
+		return nil, nil, domain.ErrLoginInvalid
 	}
 	required, err := s.Repo.RoleRequiresTwoFactor(ctx, u.RoleID)
 	if err != nil {
@@ -86,8 +139,16 @@ func (s *Service) issueSession(ctx context.Context, u domain.User, cl domain.Cli
 	if err != nil {
 		return nil, err
 	}
-	access, exp, err := s.Crypto.SignAccess(u.ID, u.RoleID, familyID)
+	access, exp, err := s.Crypto.SignAccess(u.ID, u.RoleID, deptr(u.MitraID), familyID)
 	return &domain.Session{AccessToken: access, ExpiresIn: exp, RefreshToken: refresh, User: u}, err
+}
+
+// deptr returns "" for a nil pointer, else the dereferenced value.
+func deptr(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }
 
 // Refresh rotates the refresh token in one transaction. Replaying a used
@@ -143,7 +204,7 @@ func (s *Service) Refresh(ctx context.Context, token string) (*domain.Session, e
 	if domainErr != nil {
 		return nil, domainErr
 	}
-	access, exp, err := s.Crypto.SignAccess(u.ID, u.RoleID, rec.FamilyID)
+	access, exp, err := s.Crypto.SignAccess(u.ID, u.RoleID, deptr(u.MitraID), rec.FamilyID)
 	return &domain.Session{AccessToken: access, ExpiresIn: exp, RefreshToken: next, User: u}, err
 }
 

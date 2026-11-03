@@ -62,6 +62,7 @@ type Principal struct {
 	ID        string
 	RoleID    string
 	SessionID string
+	MitraID   string
 }
 
 type principalKey struct{}

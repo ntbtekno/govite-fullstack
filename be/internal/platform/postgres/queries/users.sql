@@ -30,8 +30,8 @@ WHERE (sqlc.narg(role_id)::text IS NULL OR u.role_id = sqlc.narg(role_id))
        OR u.full_name ILIKE '%' || sqlc.narg(search) || '%');
 
 -- name: GetUser :one
-SELECT sqlc.embed(u), r.name AS role_name
-FROM "user" u JOIN role r ON r.id = u.role_id WHERE u.id = $1;
+SELECT sqlc.embed(u), r.name AS role_name, m.kode_mitra
+FROM "user" u JOIN role r ON r.id = u.role_id LEFT JOIN mitra m ON m.id = u.mitra_id WHERE u.id = $1;
 
 -- name: CreateUser :exec
 INSERT INTO "user" (id, email, full_name, role_id, password_hash) VALUES ($1, $2, $3, $4, $5);

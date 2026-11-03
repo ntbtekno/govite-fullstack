@@ -29,6 +29,7 @@ type Config struct {
 	LogLevel                   string
 	SuperAdminEmail            string
 	SuperAdminPassword         string
+	SuperAdminUsername         string
 	TrustProxy                 bool
 	MinioEndpoint              string
 	MinioAccessKey             string
@@ -94,6 +95,7 @@ func Load() (Config, error) {
 		LogLevel:                   str("LOG_LEVEL", "info"),
 		SuperAdminEmail:            strings.ToLower(str("SUPER_ADMIN_EMAIL", "")),
 		SuperAdminPassword:         str("SUPER_ADMIN_PASSWORD", ""),
+		SuperAdminUsername:         str("SUPER_ADMIN_USERNAME", ""),
 		TrustProxy:                 str("TRUST_PROXY", "false") == "true",
 		MinioEndpoint:              str("MINIO_ENDPOINT", ""),
 		MinioAccessKey:             str("MINIO_ACCESS_KEY", ""),

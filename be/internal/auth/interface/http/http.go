@@ -80,9 +80,12 @@ type sessionResponse struct {
 }
 
 type sessionUser struct {
-	ID     string `json:"id"`
-	Email  string `json:"email"`
-	RoleID string `json:"roleId"`
+	ID        string  `json:"id"`
+	Email     string  `json:"email"`
+	RoleID    string  `json:"roleId"`
+	MitraID   *string `json:"mitraId"`
+	MitraKode *string `json:"mitraKode"`
+	Username  *string `json:"username"`
 }
 
 func deliver(c *fiber.Ctx, sess *domain.Session, ch *domain.Challenge) error {
@@ -94,7 +97,7 @@ func deliver(c *fiber.Ctx, sess *domain.Session, ch *domain.Challenge) error {
 	}
 	res := sessionResponse{
 		AccessToken: sess.AccessToken, AccessTokenExpiresInSeconds: sess.ExpiresIn,
-		User:        sessionUser{sess.User.ID, sess.User.Email, sess.User.RoleID},
+		User:        sessionUser{sess.User.ID, sess.User.Email, sess.User.RoleID, sess.User.MitraID, sess.User.MitraKode, sess.User.Username},
 		BackupCodes: sess.BackupCodes,
 	}
 	if isMobile(c) {
@@ -106,8 +109,14 @@ func deliver(c *fiber.Ctx, sess *domain.Session, ch *domain.Challenge) error {
 }
 
 type loginReq struct {
-	Email    string `json:"email" validate:"required,email"`
+	Login    string `json:"login" validate:"required,min=1"`
 	Password string `json:"password" validate:"required,password"`
+}
+
+type loginMitraReq struct {
+	MitraKode string `json:"mitraKode" validate:"required,min=1"`
+	Username  string `json:"username" validate:"required,min=1"`
+	Password  string `json:"password" validate:"required,password"`
 }
 
 type verifyReq struct {
@@ -167,7 +176,15 @@ func (h Handler) Routes(r fiber.Router, loginLimit, refreshLimit fiber.Handler) 
 	g := r.Group("/auth")
 
 	g.Post("/login", loginLimit, body(func(c *fiber.Ctx, b loginReq) error {
-		sess, ch, err := h.Svc.Login(c.UserContext(), b.Email, b.Password, client(c))
+		sess, ch, err := h.Svc.Login(c.UserContext(), b.Login, b.Password, client(c))
+		if err != nil {
+			return err
+		}
+		return deliver(c, sess, ch)
+	}))
+
+	g.Post("/login-mitra", loginLimit, body(func(c *fiber.Ctx, b loginMitraReq) error {
+		sess, ch, err := h.Svc.LoginMitra(c.UserContext(), b.MitraKode, b.Username, b.Password, client(c))
 		if err != nil {
 			return err
 		}
@@ -253,6 +270,7 @@ func (h Handler) Routes(r fiber.Router, loginLimit, refreshLimit fiber.Handler) 
 		return httpx.OK(c, fiber.Map{
 			"id": u.ID, "email": u.Email, "fullName": u.FullName,
 			"avatarUrl": avatar, "roleId": u.RoleID, "roleName": u.RoleName,
+			"mitraId": u.MitraID, "mitraKode": u.MitraKode, "username": u.Username,
 			"emailVerified": u.EmailVerifiedAt != nil, "permissions": grants,
 		})
 	})
