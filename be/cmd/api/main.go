@@ -153,7 +153,11 @@ func serve(ctx context.Context, cfg config.Config, pool *pgxpool.Pool) error {
 }
 
 // SuperAdminRoleID is fixed so seed is idempotent across environments.
-const SuperAdminRoleID = "019a0000-0000-7000-8000-000000000001"
+const (
+	SuperAdminRoleID = "019a0000-0000-7000-8000-000000000001"
+	MitraAdminRoleID = "019a0000-0000-7000-8000-000000000002"
+	MitraStaffRoleID = "019a0000-0000-7000-8000-000000000003"
+)
 
 func seed(ctx context.Context, cfg config.Config, q *store.Queries) error {
 	keys := make([]string, len(policy.Permissions))
@@ -170,10 +174,27 @@ func seed(ctx context.Context, cfg config.Config, q *store.Queries) error {
 	if err := q.UpsertSystemRole(ctx, store.UpsertSystemRoleParams{ID: SuperAdminRoleID, Name: "Super Admin", Description: &desc}); err != nil {
 		return err
 	}
+	mitraAdminDesc := "Admin Mitra (mengelola user mitra)"
+	if err := q.UpsertSystemRole(ctx, store.UpsertSystemRoleParams{ID: MitraAdminRoleID, Name: "MITRA_ADMIN", Description: &mitraAdminDesc}); err != nil {
+		return err
+	}
+	mitraStaffDesc := "Staff Mitra (lihat user mitra)"
+	if err := q.UpsertSystemRole(ctx, store.UpsertSystemRoleParams{ID: MitraStaffRoleID, Name: "MITRA_STAFF", Description: &mitraStaffDesc}); err != nil {
+		return err
+	}
 	for _, p := range policy.Permissions {
 		if err := q.UpsertRolePermission(ctx, store.UpsertRolePermissionParams{ID: kernel.NewID(), RoleID: SuperAdminRoleID, Resource: p.Resource, Action: p.Action, Scope: "all"}); err != nil {
 			return err
 		}
+	}
+	if err := q.UpsertRolePermission(ctx, store.UpsertRolePermissionParams{ID: kernel.NewID(), RoleID: MitraAdminRoleID, Resource: "users", Action: "manage", Scope: "mitra"}); err != nil {
+		return err
+	}
+	if err := q.UpsertRolePermission(ctx, store.UpsertRolePermissionParams{ID: kernel.NewID(), RoleID: MitraAdminRoleID, Resource: "users", Action: "view", Scope: "mitra"}); err != nil {
+		return err
+	}
+	if err := q.UpsertRolePermission(ctx, store.UpsertRolePermissionParams{ID: kernel.NewID(), RoleID: MitraStaffRoleID, Resource: "users", Action: "view", Scope: "mitra"}); err != nil {
+		return err
 	}
 	if cfg.SuperAdminEmail == "" || cfg.SuperAdminPassword == "" {
 		return fmt.Errorf("SUPER_ADMIN_EMAIL and SUPER_ADMIN_PASSWORD are required")

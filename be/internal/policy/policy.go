@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-var Scopes = []string{"self", "team", "all"}
+var Scopes = []string{"self", "team", "mitra", "all"}
 
 var Actions = []string{"manage", "view", "create", "edit", "delete"}
 
@@ -20,6 +20,7 @@ var Resources = []string{
 	"announcements",
 	"webhooks",
 	"apiKeys",
+	"mitra",
 }
 
 type Permission struct {
@@ -32,6 +33,7 @@ func (p Permission) Key() string { return p.Resource + "." + p.Action }
 // Add a pair here (then `make gen` and rerun seed) before using it in a route.
 var Permissions = []Permission{
 	{"users", "manage"},
+	{"users", "view"},
 	{"roles", "manage"},
 	{"permissions", "view"},
 	{"audit", "view"},
@@ -40,6 +42,8 @@ var Permissions = []Permission{
 	{"announcements", "manage"},
 	{"webhooks", "manage"},
 	{"apiKeys", "manage"},
+	{"mitra", "manage"},
+	{"mitra", "view"},
 }
 
 func IsKnown(resource, action string) bool {

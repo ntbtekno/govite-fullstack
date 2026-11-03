@@ -70,6 +70,14 @@ type FcmDevice struct {
 	UpdatedAt time.Time
 }
 
+type Mitra struct {
+	ID        string
+	KodeMitra string
+	Nama      string
+	IsActive  bool
+	CreatedAt time.Time
+}
+
 type Notification struct {
 	ID        string
 	UserID    string
@@ -140,6 +148,8 @@ type User struct {
 	NotificationPushEnabled bool
 	LastLoginAt             *time.Time
 	CreatedAt               time.Time
+	Username                *string
+	MitraID                 *string
 }
 
 type UserBackupCode struct {

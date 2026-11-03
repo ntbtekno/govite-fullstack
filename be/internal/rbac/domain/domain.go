@@ -15,6 +15,7 @@ type Grant struct {
 type Scope struct {
 	Kind               string
 	UserID             string
+	MitraID            string
 	SubordinateUserIDs []string
 }
 

@@ -110,3 +110,9 @@ WHERE id = (
 
 -- name: CountBackupCodes :one
 SELECT count(*) FROM user_backup_code WHERE user_id = $1 AND used_at IS NULL;
+
+-- name: GetUserByUsername :one
+SELECT * FROM "user" WHERE username = $1;
+
+-- name: GetUserByUsernameAndMitra :one
+SELECT * FROM "user" WHERE username = $1 AND mitra_id = $2;

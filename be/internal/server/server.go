@@ -93,6 +93,7 @@ func New(d Deps) (*fiber.App, *sysapp.Service) {
 	h.announcements.Routes(g)
 	h.integrations.Routes(g)
 	h.system.Routes(g)
+	h.mitra.Routes(g)
 
 	f.Use(func(*fiber.Ctx) error { return fiber.ErrNotFound })
 	return f, sys

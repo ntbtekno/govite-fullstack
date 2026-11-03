@@ -25,6 +25,9 @@ import (
 	intapp "govite/internal/integrations/application"
 	intinfra "govite/internal/integrations/infrastructure"
 	inthttp "govite/internal/integrations/interface/http"
+	mitraapp "govite/internal/mitra/application"
+	mitrainfra "govite/internal/mitra/infrastructure"
+	mitrahttp "govite/internal/mitra/interface/http"
 	notifyapp "govite/internal/notify/application"
 	notifydomain "govite/internal/notify/domain"
 	notifyinfra "govite/internal/notify/infrastructure"
@@ -94,6 +97,7 @@ type handlers struct {
 	announcements annhttp.Handler
 	integrations  inthttp.Handler
 	system        syshttp.Handler
+	mitra         mitrahttp.Handler
 }
 
 func wire(d Deps) (handlers, *sysapp.Service) {
@@ -123,6 +127,8 @@ func wire(d Deps) (handlers, *sysapp.Service) {
 		PushAllowed: func(ctx context.Context) bool { _, on := setting(ctx); return on }}
 
 	integrations := &intapp.Service{Repo: intinfra.Repository{DB: db}, Audit: auditor, Token: crypto.RandomToken, MidtransServerKey: d.Cfg.MidtransServerKey}
+
+	mitra := &mitraapp.Service{Repo: mitrainfra.Repository{DB: db}, Tx: db, Audit: auditor}
 
 	var redisPing func(context.Context) error
 	if d.Redis != nil {
@@ -157,5 +163,6 @@ func wire(d Deps) (handlers, *sysapp.Service) {
 		system: syshttp.Handler{Svc: system, Pool: d.Pool, Env: d.Cfg.Env, Integrations: syshttp.Integrations{
 			Storage: d.Files.Enabled(), Push: d.Push != nil, Payment: integrations.PaymentEnabled(), Mailer: d.Cfg.SMTPHost != "",
 		}},
+		mitra: mitrahttp.Handler{Svc: mitra, Audit: auditor},
 	}, system
 }

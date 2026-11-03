@@ -233,7 +233,7 @@ func (q *Queries) GetTwoFactor(ctx context.Context, userID string) (UserTwoFacto
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, role_id, email, full_name, password_hash, avatar_key, is_active, email_verified_at, deleted_at, notification_push_enabled, last_login_at, created_at FROM "user" WHERE email = $1
+SELECT id, role_id, email, full_name, password_hash, avatar_key, is_active, email_verified_at, deleted_at, notification_push_enabled, last_login_at, created_at, username, mitra_id FROM "user" WHERE email = $1
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
@@ -252,12 +252,14 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.NotificationPushEnabled,
 		&i.LastLoginAt,
 		&i.CreatedAt,
+		&i.Username,
+		&i.MitraID,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, role_id, email, full_name, password_hash, avatar_key, is_active, email_verified_at, deleted_at, notification_push_enabled, last_login_at, created_at FROM "user" WHERE id = $1
+SELECT id, role_id, email, full_name, password_hash, avatar_key, is_active, email_verified_at, deleted_at, notification_push_enabled, last_login_at, created_at, username, mitra_id FROM "user" WHERE id = $1
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
@@ -276,6 +278,65 @@ func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
 		&i.NotificationPushEnabled,
 		&i.LastLoginAt,
 		&i.CreatedAt,
+		&i.Username,
+		&i.MitraID,
+	)
+	return i, err
+}
+
+const getUserByUsername = `-- name: GetUserByUsername :one
+SELECT id, role_id, email, full_name, password_hash, avatar_key, is_active, email_verified_at, deleted_at, notification_push_enabled, last_login_at, created_at, username, mitra_id FROM "user" WHERE username = $1
+`
+
+func (q *Queries) GetUserByUsername(ctx context.Context, username *string) (User, error) {
+	row := q.db.QueryRow(ctx, getUserByUsername, username)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.RoleID,
+		&i.Email,
+		&i.FullName,
+		&i.PasswordHash,
+		&i.AvatarKey,
+		&i.IsActive,
+		&i.EmailVerifiedAt,
+		&i.DeletedAt,
+		&i.NotificationPushEnabled,
+		&i.LastLoginAt,
+		&i.CreatedAt,
+		&i.Username,
+		&i.MitraID,
+	)
+	return i, err
+}
+
+const getUserByUsernameAndMitra = `-- name: GetUserByUsernameAndMitra :one
+SELECT id, role_id, email, full_name, password_hash, avatar_key, is_active, email_verified_at, deleted_at, notification_push_enabled, last_login_at, created_at, username, mitra_id FROM "user" WHERE username = $1 AND mitra_id = $2
+`
+
+type GetUserByUsernameAndMitraParams struct {
+	Username *string
+	MitraID  *string
+}
+
+func (q *Queries) GetUserByUsernameAndMitra(ctx context.Context, arg GetUserByUsernameAndMitraParams) (User, error) {
+	row := q.db.QueryRow(ctx, getUserByUsernameAndMitra, arg.Username, arg.MitraID)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.RoleID,
+		&i.Email,
+		&i.FullName,
+		&i.PasswordHash,
+		&i.AvatarKey,
+		&i.IsActive,
+		&i.EmailVerifiedAt,
+		&i.DeletedAt,
+		&i.NotificationPushEnabled,
+		&i.LastLoginAt,
+		&i.CreatedAt,
+		&i.Username,
+		&i.MitraID,
 	)
 	return i, err
 }

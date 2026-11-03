@@ -87,7 +87,7 @@ func (q *Queries) ExistingEmails(ctx context.Context, emails []string) ([]string
 }
 
 const getUser = `-- name: GetUser :one
-SELECT u.id, u.role_id, u.email, u.full_name, u.password_hash, u.avatar_key, u.is_active, u.email_verified_at, u.deleted_at, u.notification_push_enabled, u.last_login_at, u.created_at, r.name AS role_name
+SELECT u.id, u.role_id, u.email, u.full_name, u.password_hash, u.avatar_key, u.is_active, u.email_verified_at, u.deleted_at, u.notification_push_enabled, u.last_login_at, u.created_at, u.username, u.mitra_id, r.name AS role_name
 FROM "user" u JOIN role r ON r.id = u.role_id WHERE u.id = $1
 `
 
@@ -112,13 +112,15 @@ func (q *Queries) GetUser(ctx context.Context, id string) (GetUserRow, error) {
 		&i.User.NotificationPushEnabled,
 		&i.User.LastLoginAt,
 		&i.User.CreatedAt,
+		&i.User.Username,
+		&i.User.MitraID,
 		&i.RoleName,
 	)
 	return i, err
 }
 
 const listUsers = `-- name: ListUsers :many
-SELECT u.id, u.role_id, u.email, u.full_name, u.password_hash, u.avatar_key, u.is_active, u.email_verified_at, u.deleted_at, u.notification_push_enabled, u.last_login_at, u.created_at, r.name AS role_name
+SELECT u.id, u.role_id, u.email, u.full_name, u.password_hash, u.avatar_key, u.is_active, u.email_verified_at, u.deleted_at, u.notification_push_enabled, u.last_login_at, u.created_at, u.username, u.mitra_id, r.name AS role_name
 FROM "user" u JOIN role r ON r.id = u.role_id
 WHERE ($1::text IS NULL OR u.role_id = $1)
   AND ($2::bool IS NULL OR u.is_active = $2)
@@ -187,6 +189,8 @@ func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]ListUse
 			&i.User.NotificationPushEnabled,
 			&i.User.LastLoginAt,
 			&i.User.CreatedAt,
+			&i.User.Username,
+			&i.User.MitraID,
 			&i.RoleName,
 		); err != nil {
 			return nil, err
