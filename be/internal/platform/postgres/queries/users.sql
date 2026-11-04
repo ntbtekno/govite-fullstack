@@ -36,14 +36,15 @@ SELECT sqlc.embed(u), r.name AS role_name, m.kode_mitra
 FROM "user" u JOIN role r ON r.id = u.role_id LEFT JOIN mitra m ON m.id = u.mitra_id WHERE u.id = $1;
 
 -- name: CreateUser :exec
-INSERT INTO "user" (id, email, full_name, role_id, password_hash, mitra_id) VALUES ($1, $2, $3, $4, $5, sqlc.narg(mitra_id));
+INSERT INTO "user" (id, email, full_name, role_id, password_hash, mitra_id, username) VALUES ($1, $2, $3, $4, $5, sqlc.narg(mitra_id), sqlc.narg(username));
 
 -- name: UpdateUser :exec
 UPDATE "user" SET
   full_name = COALESCE(sqlc.narg(full_name), full_name),
   role_id = COALESCE(sqlc.narg(role_id), role_id),
   is_active = COALESCE(sqlc.narg(is_active), is_active),
-  mitra_id = CASE WHEN sqlc.arg(set_mitra)::bool THEN sqlc.narg(mitra_id) ELSE mitra_id END
+  mitra_id = CASE WHEN sqlc.arg(set_mitra)::bool THEN sqlc.narg(mitra_id) ELSE mitra_id END,
+  username = COALESCE(sqlc.narg(username), username)
 WHERE id = sqlc.arg(id);
 
 -- name: SetUserDeleted :exec

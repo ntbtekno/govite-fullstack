@@ -113,6 +113,45 @@ test("create a user from the dialog", async ({ page }) => {
   expect(problems).toEqual([])
 })
 
+// Proves the per-row Hapus action opens a confirmation dialog naming the user
+// and that cancelling does not delete them.
+test("delete user opens a confirm dialog and cancel keeps the user", async ({
+  page,
+}) => {
+  const problems = watch(page)
+  await signIn(page)
+  await page.goto("/admin/administration/users")
+
+  const newEmail = `e2e-del-${Date.now()}@test.local`
+  await page.getByRole("button", { name: "Add user" }).click()
+  const createDialog = page.getByRole("dialog", { name: "New user" })
+  await createDialog.getByLabel("Full name").fill("E2E Delete Me")
+  await createDialog.getByLabel("Email").fill(newEmail)
+  await createDialog.getByLabel("Initial password").fill(password)
+  await createDialog.getByRole("combobox", { name: "Role" }).click()
+  await page.getByRole("option").first().click()
+  await createDialog.getByRole("button", { name: "Create" }).click()
+  await expect(createDialog).toBeHidden()
+
+  await page.getByPlaceholder(/search/i).fill(newEmail)
+  const row = page.getByRole("row", { name: new RegExp(newEmail) })
+  await expect(row).toBeVisible()
+
+  await row.getByRole("button", { name: "Hapus" }).click()
+  const confirm = page.getByRole("alertdialog")
+  await expect(confirm).toBeVisible()
+  await expect(confirm).toContainText(newEmail)
+  await confirm.getByRole("button", { name: "Cancel" }).click()
+  await expect(confirm).toBeHidden()
+
+  // The user is still listed after cancelling.
+  await expect(
+    page.getByRole("cell", { name: newEmail, exact: true })
+  ).toBeVisible()
+
+  expect(problems).toEqual([])
+})
+
 // Proves the app's front door is the mitra login: opening the root address
 // lands on /login-mitra, while the Superadmin login stays at /login.
 test("root address lands on the mitra login", async ({ page }) => {
@@ -132,7 +171,7 @@ test("sign in as mitra via /login-mitra", async ({ page }) => {
   const problems = watch(page)
   await page.goto("/login-mitra")
   await page.getByLabel("Kode Mitra").fill(mitraKode)
-  await page.getByLabel("Username").fill(mitraUsername)
+  await page.getByLabel("Username atau Email").fill(mitraUsername)
   await page.getByLabel("Password").fill(mitraPassword)
   await page.getByRole("textbox", { name: "Captcha" }).fill(captcha)
   await page.getByRole("button", { name: "Sign in" }).click()

@@ -400,7 +400,7 @@ func TestMitraUserIsolation(t *testing.T) {
 	expect(t, e.do("GET", "/users/"+userB, nil, bearer(tokA)), 404, "USER_NOT_FOUND")
 
 	// 3. POST /users with Mitra B's id injected still creates into Mitra A.
-	r = e.do("POST", "/users", map[string]any{"email": "sneaky@test.local", "fullName": "Sneaky", "roleId": adminRole, "mitraId": mitraB}, bearer(tokA))
+	r = e.do("POST", "/users", map[string]any{"email": "sneaky@test.local", "fullName": "Sneaky", "roleId": adminRole, "mitraId": mitraB, "username": "sneaky"}, bearer(tokA))
 	expect(t, r, 201)
 	if r.data()["mitraId"] != mitraA {
 		t.Fatalf("body mitraId was honoured: %s", r.Raw)
@@ -732,6 +732,152 @@ func TestCaptchaLoginMitra(t *testing.T) {
 	if me.data()["mitraId"] != mitraID || me.data()["mitraKode"] != "MTR-CAP" {
 		t.Fatalf("mitra token wrong: %s", me.Raw)
 	}
+}
+
+// TestMitraUsernameCreateAndLogin proves a mitra user created through the API
+// with a username can log in via /login-mitra, and that the same identifier may
+// be the email. A user of another mitra is never matched.
+func TestMitraUsernameCreateAndLogin(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+
+	mitraA := e.seedMitra("MTR-USR-A", "Mitra Username A")
+	mitraB := e.seedMitra("MTR-USR-B", "Mitra Username B")
+
+	adminRole := kernel.NewID()
+	must(t, e.q.CreateRole(ctx, store.CreateRoleParams{ID: adminRole, Name: "MITRA_ADMIN"}))
+	perms := []policy.Permission{{Resource: "users", Action: "manage"}, {Resource: "users", Action: "view"}}
+	for _, p := range perms {
+		must(t, e.q.InsertRolePermission(ctx, store.InsertRolePermissionParams{ID: kernel.NewID(), RoleID: adminRole, Resource: p.Resource, Action: p.Action, Scope: "mitra"}))
+	}
+	adminA, _ := e.seedMitraUser("admin-usr-a@test.local", "admin-usr-a", mitraA, "mitra", perms...)
+	_ = adminA
+	tokA, _ := e.loginMitra("MTR-USR-A", "admin-usr-a")
+
+	// Create a mitra user with a username through the API.
+	r := e.do("POST", "/users", map[string]any{"email": "staff-a@test.local", "fullName": "Staff A", "roleId": adminRole, "username": "staff-a", "password": password}, bearer(tokA))
+	expect(t, r, 201)
+	if r.data()["username"] != "staff-a" {
+		t.Fatalf("username not stored: %s", r.Raw)
+	}
+
+	// Login by username succeeds.
+	e.loginMitra("MTR-USR-A", "staff-a")
+
+	// Login by the same user's email also succeeds.
+	e.loginMitra("MTR-USR-A", "staff-a@test.local")
+
+	// A user of Mitra B with the same-shaped email is not matched: the mitra
+	// scoping plus the distinct email keeps it a generic failure.
+	staffB, _ := e.seedMitraUser("staff-usr-b@test.local", "staff-b", mitraB, "mitra", perms...)
+	_ = staffB
+	expect(t, e.do("POST", "/auth/login-mitra", e.loginFields(map[string]string{"mitraKode": "MTR-USR-A", "username": "staff-usr-b@test.local", "password": password})), 401, "INVALID_CREDENTIALS")
+
+	// A mitra user may not be created without a username.
+	expect(t, e.do("POST", "/users", map[string]any{"email": "no-name@test.local", "fullName": "No Name", "roleId": adminRole}, bearer(tokA)), 400, "USERNAME_REQUIRED")
+
+	// A duplicate username is rejected.
+	expect(t, e.do("POST", "/users", map[string]any{"email": "dup-a@test.local", "fullName": "Dup A", "roleId": adminRole, "username": "staff-a"}, bearer(tokA)), 409, "USERNAME_TAKEN")
+
+	// An illegal username is rejected.
+	expect(t, e.do("POST", "/users", map[string]any{"email": "bad-u@test.local", "fullName": "Bad U", "roleId": adminRole, "username": "Bad Name"}, bearer(tokA)), 400, "INVALID_USERNAME")
+}
+
+// TestLoginMitraTenantIsolation proves the tenant scoping of /login-mitra is
+// applied to BOTH the username and the email branch of the identifier lookup.
+// The WHERE is mitra_id = $2 AND (username = $1 OR email = $1); if the
+// parentheses were ever lost, the username branch would escape the mitra and
+// these cases would leak a session instead of returning INVALID_CREDENTIALS.
+func TestLoginMitraTenantIsolation(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+
+	mitraA := e.seedMitra("MTR-ISO-A", "Mitra Isolation A")
+	mitraB := e.seedMitra("MTR-ISO-B", "Mitra Isolation B")
+	_ = mitraB
+
+	perms := []policy.Permission{{Resource: "users", Action: "view"}}
+	// A mitra user in Mitra A whose username and email both exist.
+	userA, _ := e.seedMitraUser("iso-a@test.local", "iso-a", mitraA, "mitra", perms...)
+	_ = userA
+
+	// a. Username of Mitra A + mitraKode of Mitra B + correct password: rejected.
+	expect(t, e.do("POST", "/auth/login-mitra", e.loginFields(map[string]string{"mitraKode": "MTR-ISO-B", "username": "iso-a", "password": password})), 401, "INVALID_CREDENTIALS")
+
+	// b. Email of Mitra A + mitraKode of Mitra B + correct password: rejected.
+	expect(t, e.do("POST", "/auth/login-mitra", e.loginFields(map[string]string{"mitraKode": "MTR-ISO-B", "username": "iso-a@test.local", "password": password})), 401, "INVALID_CREDENTIALS")
+
+	// c. A Superadmin (mitra_id NULL) alongside ANY mitra kode is rejected: the
+	// mitra scope must not match a NULL mitra row.
+	superID, _ := e.seedUser("iso-super@test.local")
+	_, err := e.pool.Exec(ctx, `UPDATE "user" SET username = 'iso-super' WHERE id = $1`, superID)
+	must(t, err)
+	expect(t, e.do("POST", "/auth/login-mitra", e.loginFields(map[string]string{"mitraKode": "MTR-ISO-A", "username": "iso-super", "password": password})), 401, "INVALID_CREDENTIALS")
+
+	// d. Positive control: the same user logs in through Mitra A by username
+	// and again by email.
+	e.loginMitra("MTR-ISO-A", "iso-a")
+	e.loginMitra("MTR-ISO-A", "iso-a@test.local")
+}
+
+// TestLegacyUserGetsUsernameViaUpdate proves a Superadmin can give a legacy user
+// (username still NULL) a username through the update endpoint, after which
+// /login-mitra works for that mitra user.
+func TestLegacyUserGetsUsernameViaUpdate(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+
+	mitra := e.seedMitra("MTR-LEG", "Mitra Legacy")
+	roleID := kernel.NewID()
+	must(t, e.q.CreateRole(ctx, store.CreateRoleParams{ID: roleID, Name: "MITRA_STAFF"}))
+	must(t, e.q.InsertRolePermission(ctx, store.InsertRolePermissionParams{ID: kernel.NewID(), RoleID: roleID, Resource: "users", Action: "view", Scope: "mitra"}))
+
+	// A legacy mitra user with a NULL username.
+	legacyID := kernel.NewID()
+	hash, _ := crypto.HashPassword(password)
+	name := "Legacy"
+	must(t, e.q.CreateUser(ctx, store.CreateUserParams{ID: legacyID, Email: "legacy@test.local", FullName: &name, RoleID: roleID, PasswordHash: &hash, MitraID: &mitra}))
+
+	// Superadmin fills the username in.
+	e.seedUser("root@test.local", all...)
+	superTok, _ := e.login("root@test.local")
+	r := e.do("PATCH", "/users/"+legacyID, map[string]any{"username": "legacy-user"}, bearer(superTok))
+	expect(t, r, 200)
+	if r.data()["username"] != "legacy-user" {
+		t.Fatalf("username not set: %s", r.Raw)
+	}
+
+	// The user can now log in via /login-mitra.
+	e.loginMitra("MTR-LEG", "legacy-user")
+}
+
+// TestDeletedUserCannotLogIn proves the remove endpoint (soft delete) stops a
+// mitra user from logging in.
+func TestDeletedUserCannotLogIn(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+
+	mitra := e.seedMitra("MTR-DEL", "Mitra Deleted")
+	roleID := kernel.NewID()
+	must(t, e.q.CreateRole(ctx, store.CreateRoleParams{ID: roleID, Name: "MITRA_ADMIN"}))
+	perms := []policy.Permission{{Resource: "users", Action: "manage"}, {Resource: "users", Action: "view"}}
+	for _, p := range perms {
+		must(t, e.q.InsertRolePermission(ctx, store.InsertRolePermissionParams{ID: kernel.NewID(), RoleID: roleID, Resource: p.Resource, Action: p.Action, Scope: "mitra"}))
+	}
+	adminID, _ := e.seedMitraUser("admin-del@test.local", "admin-del", mitra, "mitra", perms...)
+	_ = adminID
+	tok, _ := e.loginMitra("MTR-DEL", "admin-del")
+
+	r := e.do("POST", "/users", map[string]any{"email": "doomed@test.local", "fullName": "Doomed", "roleId": roleID, "username": "doomed", "password": password}, bearer(tok))
+	expect(t, r, 201)
+	doomedID := r.data()["id"].(string)
+
+	// The user can log in before removal.
+	e.loginMitra("MTR-DEL", "doomed")
+
+	expect(t, e.do("DELETE", "/users/"+doomedID, nil, bearer(tok)), 200)
+
+	expect(t, e.do("POST", "/auth/login-mitra", e.loginFields(map[string]string{"mitraKode": "MTR-DEL", "username": "doomed", "password": password})), 401, "INVALID_CREDENTIALS")
 }
 
 func TestRoleRequiredTwoFactorAndBackupCodes(t *testing.T) {

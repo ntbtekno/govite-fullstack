@@ -9,6 +9,10 @@ export default defineConfig({
   fullyParallel: false,
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [["github"], ["list"]] : "list",
+  // Password hashing (argon2) plus a cold preview server make sign-in and page
+  // loads slow on a loaded host; keep assertions from flaking on latency.
+  timeout: 120_000,
+  expect: { timeout: 20_000 },
   use: {
     baseURL: "http://localhost:4173",
     trace: "retain-on-failure",

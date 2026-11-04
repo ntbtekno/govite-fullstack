@@ -3,6 +3,7 @@ package application
 
 import (
 	"context"
+	"regexp"
 	"strings"
 	"time"
 
@@ -21,6 +22,21 @@ func actor(ctx context.Context) string { return kernel.PrincipalFrom(ctx).ID }
 
 // mitraRoles are the only role names a mitra caller may assign to a user.
 var mitraRoles = map[string]bool{"mitra_admin": true, "mitra_staff": true}
+
+// usernameRe allows lower-case letters, digits, dot, underscore and hyphen.
+// A leading @ is impossible, so a username can never be confused with an email
+// at login.
+var usernameRe = regexp.MustCompile(`^[a-z0-9._-]{3,32}$`)
+
+// validateUsername normalises and checks a username. An empty value is allowed
+// only when the user has no mitra (required is enforced by the caller).
+func validateUsername(username string) (string, error) {
+	u := strings.TrimSpace(username)
+	if !usernameRe.MatchString(u) {
+		return "", domain.ErrInvalidUsername
+	}
+	return u, nil
+}
 
 // applyScopeFilter constrains f to the caller's scope. A mitra scope forces
 // mitra_id and ignores any mitra_id the request tried to filter by.
@@ -99,11 +115,12 @@ type CreateInput struct {
 	RoleID   string  `json:"roleId" validate:"required,uuid"`
 	Password string  `json:"password" validate:"omitempty,password"`
 	MitraID  *string `json:"mitraId" validate:"omitempty,uuid"`
+	Username string  `json:"username"`
 }
 
 // Create adds a user. Without a password the user is invited by email. A mitra
 // caller always creates into its own mitra; any mitraId in the request is
-// ignored.
+// ignored. A username is required for a user that ends up in a mitra.
 func (s *Service) Create(ctx context.Context, sc domain.Scope, in CreateInput) (domain.User, error) {
 	if ok, err := s.Repo.RoleExists(ctx, in.RoleID); err != nil || !ok {
 		return domain.User{}, domain.ErrInvalidRole
@@ -115,6 +132,29 @@ func (s *Service) Create(ctx context.Context, sc domain.Scope, in CreateInput) (
 	if own, ok := sc.MitraFilter(); ok {
 		mitraID = &own
 	}
+	raw := strings.TrimSpace(in.Username)
+	if raw == "" {
+		if mitraID != nil {
+			return domain.User{}, domain.ErrUsernameRequired
+		}
+	} else {
+		u, err := validateUsername(raw)
+		if err != nil {
+			return domain.User{}, err
+		}
+		taken, err := s.Repo.UsernameTaken(ctx, u)
+		if err != nil {
+			return domain.User{}, err
+		}
+		if taken {
+			return domain.User{}, domain.ErrUsernameTaken
+		}
+		raw = u
+	}
+	var username *string
+	if raw != "" {
+		username = &raw
+	}
 	var hash *string
 	if in.Password != "" {
 		h, err := s.Creds.HashPassword(in.Password)
@@ -124,7 +164,7 @@ func (s *Service) Create(ctx context.Context, sc domain.Scope, in CreateInput) (
 		hash = &h
 	}
 	id := kernel.NewID()
-	err := s.Repo.Create(ctx, domain.NewUser{ID: id, Email: strings.ToLower(strings.TrimSpace(in.Email)), FullName: strings.TrimSpace(in.FullName), RoleID: in.RoleID, PasswordHash: hash, MitraID: mitraID})
+	err := s.Repo.Create(ctx, domain.NewUser{ID: id, Email: strings.ToLower(strings.TrimSpace(in.Email)), FullName: strings.TrimSpace(in.FullName), RoleID: in.RoleID, PasswordHash: hash, MitraID: mitraID, Username: username})
 	if err != nil {
 		return domain.User{}, err
 	}
@@ -161,6 +201,31 @@ func (s *Service) Update(ctx context.Context, sc domain.Scope, id string, c doma
 		}
 		if err := s.checkRoleAssignable(ctx, sc, *c.RoleID); err != nil {
 			return cur, err
+		}
+	}
+	if c.Username != nil {
+		u, err := validateUsername(*c.Username)
+		if err != nil {
+			return cur, err
+		}
+		if cur.Username == nil || *cur.Username != u {
+			taken, err := s.Repo.UsernameTaken(ctx, u)
+			if err != nil {
+				return cur, err
+			}
+			if taken {
+				return cur, domain.ErrUsernameTaken
+			}
+		}
+		c.Username = &u
+	} else if cur.Username == nil {
+		// A user that will live in a mitra must carry a username to log in.
+		targetMitra := cur.MitraID
+		if c.MitraID != nil {
+			targetMitra = c.MitraID
+		}
+		if targetMitra != nil {
+			return cur, domain.ErrUsernameRequired
 		}
 	}
 	err = s.Tx.Do(ctx, func(ctx context.Context) error {

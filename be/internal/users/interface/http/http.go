@@ -51,6 +51,7 @@ type updateReq struct {
 	RoleID   *string `json:"roleId" validate:"omitempty,uuid"`
 	IsActive *bool   `json:"isActive"`
 	MitraID  *string `json:"mitraId" validate:"omitempty,uuid"`
+	Username *string `json:"username"`
 }
 
 type bulkReq struct {
@@ -212,7 +213,7 @@ func (h Handler) Routes(g rbac.Guarded) {
 		if err := httpx.Body(c, &b); err != nil {
 			return err
 		}
-		v, err := h.Svc.Update(c.UserContext(), scope(c), id, domain.Changes{FullName: httpx.TrimPtr(b.FullName), RoleID: b.RoleID, IsActive: b.IsActive, MitraID: b.MitraID})
+		v, err := h.Svc.Update(c.UserContext(), scope(c), id, domain.Changes{FullName: httpx.TrimPtr(b.FullName), RoleID: b.RoleID, IsActive: b.IsActive, MitraID: b.MitraID, Username: httpx.TrimPtr(b.Username)})
 		if err != nil {
 			return err
 		}

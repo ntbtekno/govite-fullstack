@@ -10,13 +10,16 @@ import (
 )
 
 var (
-	ErrNotFound      = kernel.E(kernel.NotFound, "USER_NOT_FOUND", "User not found")
-	ErrEmailTaken    = kernel.E(kernel.Conflict, "EMAIL_TAKEN", "Email already in use")
-	ErrModifySelf    = kernel.E(kernel.Forbidden, "CANNOT_MODIFY_SELF", "You cannot change your own role or deactivate yourself")
-	ErrInvalidRole   = kernel.E(kernel.Invalid, "INVALID_ROLE", "Role does not exist")
-	ErrAlreadyActive = kernel.E(kernel.Conflict, "USER_ALREADY_ACTIVE", "User has already accepted the invite")
-	ErrDeleted       = kernel.E(kernel.Conflict, "USER_DELETED", "User is deleted; restore it first")
-	ErrNotDeleted    = kernel.E(kernel.Conflict, "USER_NOT_DELETED", "User is not deleted")
+	ErrNotFound         = kernel.E(kernel.NotFound, "USER_NOT_FOUND", "User not found")
+	ErrEmailTaken       = kernel.E(kernel.Conflict, "EMAIL_TAKEN", "Email already in use")
+	ErrUsernameTaken    = kernel.E(kernel.Conflict, "USERNAME_TAKEN", "Username already in use")
+	ErrInvalidUsername  = kernel.E(kernel.Invalid, "INVALID_USERNAME", "Username must be 3-32 characters of a-z, 0-9, dot, underscore or hyphen")
+	ErrUsernameRequired = kernel.E(kernel.Invalid, "USERNAME_REQUIRED", "Username is required for a mitra user")
+	ErrModifySelf       = kernel.E(kernel.Forbidden, "CANNOT_MODIFY_SELF", "You cannot change your own role or deactivate yourself")
+	ErrInvalidRole      = kernel.E(kernel.Invalid, "INVALID_ROLE", "Role does not exist")
+	ErrAlreadyActive    = kernel.E(kernel.Conflict, "USER_ALREADY_ACTIVE", "User has already accepted the invite")
+	ErrDeleted          = kernel.E(kernel.Conflict, "USER_DELETED", "User is deleted; restore it first")
+	ErrNotDeleted       = kernel.E(kernel.Conflict, "USER_NOT_DELETED", "User is not deleted")
 	// ErrRoleNotAllowed is returned when a mitra caller tries to assign a role
 	// outside the mitra-managed set (for example Super Admin).
 	ErrRoleNotAllowed = kernel.E(kernel.Forbidden, "ROLE_NOT_ALLOWED", "Role is not allowed for a mitra user")
@@ -49,6 +52,7 @@ type User struct {
 	ID              string     `json:"id"`
 	Email           string     `json:"email"`
 	FullName        *string    `json:"fullName"`
+	Username        *string    `json:"username"`
 	AvatarURL       *string    `json:"avatarUrl"`
 	RoleID          string     `json:"roleId"`
 	RoleName        string     `json:"roleName"`
@@ -78,6 +82,9 @@ type Changes struct {
 	RoleID   *string
 	IsActive *bool
 	MitraID  *string
+	// Username, when set, replaces the username. A mitra caller needs one to
+	// log in; a Superadmin uses it to give a legacy NULL-username user one.
+	Username *string
 }
 
 // CheckUpdate enforces the update invariants and reports whether the
@@ -117,6 +124,7 @@ type NewUser struct {
 	ID, Email, FullName, RoleID string
 	PasswordHash                *string
 	MitraID                     *string
+	Username                    *string
 }
 
 type Repository interface {
@@ -136,6 +144,8 @@ type Repository interface {
 	// RoleIDsByName maps lower-cased role names to IDs.
 	RoleIDsByName(ctx context.Context) (map[string]string, error)
 	ExistingEmails(ctx context.Context, emails []string) ([]string, error)
+	// UsernameTaken reports whether any user already owns username.
+	UsernameTaken(ctx context.Context, username string) (bool, error)
 }
 
 // Credentials is what users borrows from auth.

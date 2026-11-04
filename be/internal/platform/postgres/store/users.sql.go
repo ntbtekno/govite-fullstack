@@ -43,7 +43,7 @@ func (q *Queries) CountUsers(ctx context.Context, arg CountUsersParams) (int64, 
 }
 
 const createUser = `-- name: CreateUser :exec
-INSERT INTO "user" (id, email, full_name, role_id, password_hash, mitra_id) VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO "user" (id, email, full_name, role_id, password_hash, mitra_id, username) VALUES ($1, $2, $3, $4, $5, $6, $7)
 `
 
 type CreateUserParams struct {
@@ -53,6 +53,7 @@ type CreateUserParams struct {
 	RoleID       string
 	PasswordHash *string
 	MitraID      *string
+	Username     *string
 }
 
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) error {
@@ -63,6 +64,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) error {
 		arg.RoleID,
 		arg.PasswordHash,
 		arg.MitraID,
+		arg.Username,
 	)
 	return err
 }
@@ -261,8 +263,9 @@ UPDATE "user" SET
   full_name = COALESCE($1, full_name),
   role_id = COALESCE($2, role_id),
   is_active = COALESCE($3, is_active),
-  mitra_id = CASE WHEN $4::bool THEN $5 ELSE mitra_id END
-WHERE id = $6
+  mitra_id = CASE WHEN $4::bool THEN $5 ELSE mitra_id END,
+  username = COALESCE($6, username)
+WHERE id = $7
 `
 
 type UpdateUserParams struct {
@@ -271,6 +274,7 @@ type UpdateUserParams struct {
 	IsActive *bool
 	SetMitra bool
 	MitraID  *string
+	Username *string
 	ID       string
 }
 
@@ -281,6 +285,7 @@ func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) error {
 		arg.IsActive,
 		arg.SetMitra,
 		arg.MitraID,
+		arg.Username,
 		arg.ID,
 	)
 	return err

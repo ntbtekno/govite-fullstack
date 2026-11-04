@@ -56,6 +56,7 @@ export function UsersPage() {
   const { can, user } = useAuth()
   const canManage = can("users", "manage")
   const isSuperadmin = !user?.mitraId
+  const currentUserId = user?.id
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState("")
   const [roleId, setRoleId] = useState(ANY)
@@ -120,6 +121,14 @@ export function UsersPage() {
     },
   })
 
+  const remove = useMutation({
+    mutationFn: (id: string) => usersApi.remove(id),
+    onSuccess: async () => {
+      toast.success("User deleted")
+      await queryClient.invalidateQueries({ queryKey: ["users"] })
+    },
+  })
+
   const [open, setOpen] = useState(false)
 
   function onCreate(e: FormEvent<HTMLFormElement>) {
@@ -129,6 +138,7 @@ export function UsersPage() {
       {
         email: String(form.get("email")),
         fullName: String(form.get("fullName")),
+        username: String(form.get("username")) || undefined,
         roleId: String(form.get("roleId")),
         // Empty password means "invite by email" on the API side.
         password: String(form.get("password")) || undefined,
@@ -183,6 +193,21 @@ export function UsersPage() {
                   <div className="grid gap-2">
                     <Label htmlFor="email">Email</Label>
                     <Input id="email" name="email" type="email" required />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="username">Username</Label>
+                    <Input
+                      id="username"
+                      name="username"
+                      autoComplete="off"
+                      pattern="[a-z0-9._-]{3,32}"
+                      required={!isSuperadmin}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      {isSuperadmin
+                        ? "Optional; required for a user assigned to a mitra."
+                        : "Required. Lower-case letters, digits, dot, underscore or hyphen (3-32)."}
+                    </p>
                   </div>
                   <div className="grid gap-2">
                     <Label htmlFor="password">Initial password</Label>
@@ -459,14 +484,34 @@ export function UsersPage() {
                   : "—"}
               </TableCell>
               <TableCell className="text-right">
-                <Button asChild variant="ghost" size="sm">
-                  <Link
-                    to="/admin/administration/users/$userId"
-                    params={{ userId: user.id }}
-                  >
-                    View
-                  </Link>
-                </Button>
+                <div className="flex justify-end gap-1">
+                  <Button asChild variant="ghost" size="sm">
+                    <Link
+                      to="/admin/administration/users/$userId"
+                      params={{ userId: user.id }}
+                    >
+                      View
+                    </Link>
+                  </Button>
+                  {canManage && user.id !== currentUserId && !user.deletedAt && (
+                    <ConfirmAction
+                      title={`Hapus ${user.fullName ?? user.email}?`}
+                      description={`User ${user.email} tidak bisa login lagi sesudah dihapus.`}
+                      confirmLabel="Hapus"
+                      onConfirm={() => remove.mutate(user.id)}
+                      trigger={
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-destructive"
+                          disabled={remove.isPending}
+                        >
+                          Hapus
+                        </Button>
+                      }
+                    />
+                  )}
+                </div>
               </TableCell>
             </TableRow>
           ))}

@@ -120,3 +120,9 @@ SELECT * FROM "user" WHERE username = $1;
 
 -- name: GetUserByUsernameAndMitra :one
 SELECT * FROM "user" WHERE username = $1 AND mitra_id = $2;
+
+-- name: GetUserByLoginAndMitra :one
+SELECT * FROM "user" WHERE (username = $1 OR email = $1) AND mitra_id = $2;
+
+-- name: UsernameExists :one
+SELECT EXISTS(SELECT 1 FROM "user" WHERE username = $1) AS exists;

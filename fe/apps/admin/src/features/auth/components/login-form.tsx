@@ -209,7 +209,7 @@ export function LoginForm({
             />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="username">Username</Label>
+            <Label htmlFor="username">Username atau Email</Label>
             <Input
               id="username"
               name="username"

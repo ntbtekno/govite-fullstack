@@ -89,6 +89,7 @@ export function UserDetailPage() {
     update.mutate({
       fullName: String(form.get("fullName")),
       roleId: String(form.get("roleId")),
+      username: String(form.get("username")) || undefined,
     })
   }
 
@@ -144,6 +145,22 @@ export function UserDetailPage() {
                       disabled={!canManage}
                       required
                     />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="username">Username</Label>
+                    <Input
+                      id="username"
+                      name="username"
+                      autoComplete="off"
+                      pattern="[a-z0-9._-]{3,32}"
+                      defaultValue={user.data.username ?? ""}
+                      disabled={!canManage}
+                      required={!!user.data.mitraId}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Required for a mitra user: 3-32 characters of a-z, 0-9,
+                      dot, underscore or hyphen.
+                    </p>
                   </div>
                   <div className="grid gap-2">
                     <Label htmlFor="roleId">Role</Label>

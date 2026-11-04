@@ -108,9 +108,10 @@ func isEmail(login string) (string, bool) {
 	return "", false
 }
 
-// LoginMitra verifies captcha, mitraKode, username and password. The captcha
-// is checked first; the returned error is always generic — the caller must
-// never distinguish between wrong captcha, mitra, username, or password.
+// LoginMitra verifies captcha, mitraKode, the identifier (username OR email)
+// and password. The captcha is checked first; the returned error is always
+// generic — the caller must never distinguish between wrong captcha, mitra,
+// identifier, or password.
 func (s *Service) LoginMitra(ctx context.Context, mitraKode, username, password, captchaID, captcha string, cl domain.Client) (*domain.Session, *domain.Challenge, error) {
 	if err := s.Captcha.Verify(ctx, captchaID, captcha); err != nil {
 		s.loginAudit(ctx, "auth.login_mitra.failure", username, mitraKode, "invalid_captcha", "")
@@ -125,7 +126,7 @@ func (s *Service) LoginMitra(ctx context.Context, mitraKode, username, password,
 	if err != nil {
 		return nil, nil, err
 	}
-	u, err := s.Repo.UserByUsernameAndMitra(ctx, username, m.ID)
+	u, err := s.Repo.UserByLoginAndMitra(ctx, username, m.ID)
 	if notFound(err) || (err == nil && !u.CanAuthenticate()) {
 		s.Crypto.BurnPassword(password)
 		s.loginAudit(ctx, "auth.login_mitra.failure", username, mitraKode, "invalid_credentials", "")

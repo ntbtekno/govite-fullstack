@@ -57,6 +57,15 @@ export interface RoleResponse {
 
 const password = PasswordSchema
 
+export const UsernameSchema = z
+  .string()
+  .trim()
+  .regex(/^[a-z0-9._-]{3,32}$/, {
+    message:
+      "Username must be 3-32 characters of a-z, 0-9, dot, underscore or hyphen",
+  })
+export type Username = z.infer<typeof UsernameSchema>
+
 export const CreateUserRequestSchema = z.object({
   email: z.email(),
   fullName: z.string().trim().min(1).max(100),
@@ -64,6 +73,8 @@ export const CreateUserRequestSchema = z.object({
   password: password.optional(),
   // Superadmin only; ignored for a mitra caller (forced to its own mitra).
   mitraId: z.uuid().nullable().optional(),
+  // Required by the API when the user ends up in a mitra.
+  username: UsernameSchema.optional(),
 })
 export type CreateUserRequest = z.infer<typeof CreateUserRequestSchema>
 
@@ -72,6 +83,7 @@ export const UpdateUserRequestSchema = z.object({
   roleId: z.uuid().optional(),
   isActive: z.boolean().optional(),
   mitraId: z.uuid().nullable().optional(),
+  username: UsernameSchema.optional(),
 })
 export type UpdateUserRequest = z.infer<typeof UpdateUserRequestSchema>
 
@@ -101,6 +113,7 @@ export interface UserResponse {
   id: string
   email: string
   fullName: string | null
+  username: string | null
   avatarUrl: string | null
   roleId: string
   roleName: string

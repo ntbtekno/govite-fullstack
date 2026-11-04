@@ -25,7 +25,7 @@ func (r Repository) toUser(u store.User, role string) domain.User {
 			avatar = &v
 		}
 	}
-	return domain.User{ID: u.ID, Email: u.Email, FullName: u.FullName, AvatarURL: avatar, RoleID: u.RoleID, RoleName: role, MitraID: u.MitraID, IsActive: u.IsActive, Invited: u.PasswordHash == nil, EmailVerifiedAt: u.EmailVerifiedAt, DeletedAt: u.DeletedAt, LastLoginAt: u.LastLoginAt, CreatedAt: u.CreatedAt}
+	return domain.User{ID: u.ID, Email: u.Email, FullName: u.FullName, Username: u.Username, AvatarURL: avatar, RoleID: u.RoleID, RoleName: role, MitraID: u.MitraID, IsActive: u.IsActive, Invited: u.PasswordHash == nil, EmailVerifiedAt: u.EmailVerifiedAt, DeletedAt: u.DeletedAt, LastLoginAt: u.LastLoginAt, CreatedAt: u.CreatedAt}
 }
 
 func (r Repository) Get(ctx context.Context, id string) (domain.User, error) {
@@ -58,15 +58,22 @@ func (r Repository) Count(ctx context.Context, f domain.Filter) (int64, error) {
 }
 
 func (r Repository) Create(ctx context.Context, u domain.NewUser) error {
-	err := r.DB.Q(ctx).CreateUser(ctx, store.CreateUserParams{ID: u.ID, Email: u.Email, FullName: &u.FullName, RoleID: u.RoleID, PasswordHash: u.PasswordHash, MitraID: u.MitraID})
+	err := r.DB.Q(ctx).CreateUser(ctx, store.CreateUserParams{ID: u.ID, Email: u.Email, FullName: &u.FullName, RoleID: u.RoleID, PasswordHash: u.PasswordHash, MitraID: u.MitraID, Username: u.Username})
 	if postgres.IsUnique(err, "email") {
 		return domain.ErrEmailTaken
+	}
+	if postgres.IsUnique(err, "username") {
+		return domain.ErrUsernameTaken
 	}
 	return err
 }
 
 func (r Repository) Update(ctx context.Context, id string, c domain.Changes) error {
-	return r.DB.Q(ctx).UpdateUser(ctx, store.UpdateUserParams{ID: id, FullName: c.FullName, RoleID: c.RoleID, IsActive: c.IsActive, SetMitra: c.MitraID != nil, MitraID: c.MitraID})
+	err := r.DB.Q(ctx).UpdateUser(ctx, store.UpdateUserParams{ID: id, FullName: c.FullName, RoleID: c.RoleID, IsActive: c.IsActive, SetMitra: c.MitraID != nil, MitraID: c.MitraID, Username: c.Username})
+	if postgres.IsUnique(err, "username") {
+		return domain.ErrUsernameTaken
+	}
+	return err
 }
 
 func (r Repository) SetDeleted(ctx context.Context, id string, at *time.Time) error {
@@ -111,4 +118,8 @@ func (r Repository) RoleIDsByName(ctx context.Context) (map[string]string, error
 
 func (r Repository) ExistingEmails(ctx context.Context, emails []string) ([]string, error) {
 	return r.DB.Q(ctx).ExistingEmails(ctx, emails)
+}
+
+func (r Repository) UsernameTaken(ctx context.Context, username string) (bool, error) {
+	return r.DB.Q(ctx).UsernameExists(ctx, &username)
 }

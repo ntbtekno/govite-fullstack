@@ -284,6 +284,37 @@ func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
 	return i, err
 }
 
+const getUserByLoginAndMitra = `-- name: GetUserByLoginAndMitra :one
+SELECT id, role_id, email, full_name, password_hash, avatar_key, is_active, email_verified_at, deleted_at, notification_push_enabled, last_login_at, created_at, username, mitra_id FROM "user" WHERE (username = $1 OR email = $1) AND mitra_id = $2
+`
+
+type GetUserByLoginAndMitraParams struct {
+	Username *string
+	MitraID  *string
+}
+
+func (q *Queries) GetUserByLoginAndMitra(ctx context.Context, arg GetUserByLoginAndMitraParams) (User, error) {
+	row := q.db.QueryRow(ctx, getUserByLoginAndMitra, arg.Username, arg.MitraID)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.RoleID,
+		&i.Email,
+		&i.FullName,
+		&i.PasswordHash,
+		&i.AvatarKey,
+		&i.IsActive,
+		&i.EmailVerifiedAt,
+		&i.DeletedAt,
+		&i.NotificationPushEnabled,
+		&i.LastLoginAt,
+		&i.CreatedAt,
+		&i.Username,
+		&i.MitraID,
+	)
+	return i, err
+}
+
 const getUserByUsername = `-- name: GetUserByUsername :one
 SELECT id, role_id, email, full_name, password_hash, avatar_key, is_active, email_verified_at, deleted_at, notification_push_enabled, last_login_at, created_at, username, mitra_id FROM "user" WHERE username = $1
 `
@@ -589,4 +620,15 @@ func (q *Queries) UseUserToken(ctx context.Context, id string) (int64, error) {
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const usernameExists = `-- name: UsernameExists :one
+SELECT EXISTS(SELECT 1 FROM "user" WHERE username = $1) AS exists
+`
+
+func (q *Queries) UsernameExists(ctx context.Context, username *string) (bool, error) {
+	row := q.db.QueryRow(ctx, usernameExists, username)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }

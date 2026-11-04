@@ -133,6 +133,10 @@ type Repository interface {
 	UserByID(ctx context.Context, id string) (User, error)
 	UserByUsername(ctx context.Context, username string) (User, error)
 	UserByUsernameAndMitra(ctx context.Context, username, mitraID string) (User, error)
+	// UserByLoginAndMitra matches the identifier against username OR email
+	// inside one mitra. A username can never contain '@', so the two never
+	// collide.
+	UserByLoginAndMitra(ctx context.Context, login, mitraID string) (User, error)
 	MitraByKode(ctx context.Context, kode string) (MitraInfo, error)
 	// UserWithRole also fills RoleName.
 	UserWithRole(ctx context.Context, id string) (User, error)

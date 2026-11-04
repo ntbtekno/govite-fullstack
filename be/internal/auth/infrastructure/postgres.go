@@ -33,6 +33,11 @@ func (r Repository) UserByUsernameAndMitra(ctx context.Context, username, mitraI
 	return toUser(u, ""), postgres.Err(err)
 }
 
+func (r Repository) UserByLoginAndMitra(ctx context.Context, login, mitraID string) (domain.User, error) {
+	u, err := r.DB.Q(ctx).GetUserByLoginAndMitra(ctx, store.GetUserByLoginAndMitraParams{Username: &login, MitraID: &mitraID})
+	return toUser(u, ""), postgres.Err(err)
+}
+
 func (r Repository) MitraByKode(ctx context.Context, kode string) (domain.MitraInfo, error) {
 	m, err := r.DB.Q(ctx).GetMitraByKode(ctx, kode)
 	if err != nil {
