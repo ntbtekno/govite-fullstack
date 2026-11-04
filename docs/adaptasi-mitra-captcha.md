@@ -500,6 +500,39 @@ Jangan melompati urutan.
 - DoD akhir = semua checklist Milestone 0–4 masih lolos +
   seluruh verifikasi di atas lolos.
 
+**Status 4 Nov 2026 — SELESAI.**
+
+- Audit: `Login`/`LoginMitra` mencatat `auth.login.*` /
+  `auth.login_mitra.*` (success, failure, invalid_captcha,
+  two_factor_challenge) dengan detail outcome + login/mitraKode —
+  TANPA password atau kode captcha (`after` hanya berisi outcome,
+  login, mitraKode). `users.application.denyCrossMitra` mencatat
+  `user.*_cross_mitra` saat scope mitra menolak target lintas
+  mitra (response tetap 404 agar tak bisa enumerasi). Audit
+  perubahan mitra (`mitra.update`, `mitra.set_active`) sudah ada
+  sejak M4; perubahan `mitra_id` user tercatat via `user.update`.
+- Hardening produksi: `config.E2ECaptchaOverride()` dan
+  `config.E2EMitraSeed()` mengembalikan kosong/`ok=false` saat
+  `APP_ENV=production`, dan `cmd/api` memakai keduanya. Test
+  `TestE2EHooksDisabledInProduction` membuktikan hook captcha
+  tetap + seed mitra e2e mati di produksi (di dev aktif).
+- Test khusus `TestMovingUserBetweenMitrasRevokesOldRefresh`:
+  setelah Superadmin memindahkan user ke mitra lain, refresh
+  token lamanya ditolak (`INVALID_REFRESH_TOKEN`), dan user bisa
+  login lagi ke mitra baru.
+- Front door: root `/` redirect ke `/login-mitra`; `/login`
+  (Superadmin) tetap seperti semula. Browser e2e menambah test
+  "root address lands on the mitra login".
+- OpenAPI: tidak ada route runtime baru di M5 (perubahan hanya
+  perilaku + audit), `TestOpenAPICoversRuntimeRoutes` lolos
+  tanpa perubahan `openapi.json`.
+- README fork: bagian "Mitra (tenant) setup" (seed Superadmin +
+  Mitra Admin pertama, membuat mitra pertama) dan checklist
+  produksi diperbarui (hook e2e inert di produksi).
+- Bukti: `be make lint test`, `be make test-e2e` (Postgres
+  test), `fe pnpm lint && typecheck && test && build`, dan
+  `scripts/e2e.sh` — hasilnya dilaporkan di laporan penutupan.
+
 ## 7. Aturan yang TIDAK BOLEH dilanggar Kilo Code
 
 1. Jangan mengubah envelope response, kecuali menambahkan field

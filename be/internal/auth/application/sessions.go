@@ -39,11 +39,26 @@ func (s *Service) Authenticate(token string) (kernel.Principal, error) {
 
 func (s *Service) HashPassword(plain string) (string, error) { return s.Crypto.HashPassword(plain) }
 
+// loginAudit records a login attempt. It never carries the password or the
+// captcha answer: only which principal/login was tried and the outcome, so an
+// operator can spot failures without any secret ending up in the log.
+func (s *Service) loginAudit(ctx context.Context, action, login, mitraKode, outcome, userID string) {
+	if s.Audit == nil {
+		return
+	}
+	detail := map[string]any{"outcome": outcome, "login": login}
+	if mitraKode != "" {
+		detail["mitraKode"] = mitraKode
+	}
+	s.Audit.Record(ctx, action, "session", userID, nil, detail)
+}
+
 // Login verifies the captcha and password; returns a session or a 2FA
 // challenge. login may be an email (contains @) or a username. The captcha is
 // checked first, so a wrong code fails before any credential lookup.
 func (s *Service) Login(ctx context.Context, login, password, captchaID, captcha string, cl domain.Client) (*domain.Session, *domain.Challenge, error) {
 	if err := s.Captcha.Verify(ctx, captchaID, captcha); err != nil {
+		s.loginAudit(ctx, "auth.login.failure", login, "", "invalid_captcha", "")
 		return nil, nil, err
 	}
 	var u domain.User
@@ -55,12 +70,14 @@ func (s *Service) Login(ctx context.Context, login, password, captchaID, captcha
 	}
 	if notFound(err) || (err == nil && !u.CanAuthenticate()) {
 		s.Crypto.BurnPassword(password)
+		s.loginAudit(ctx, "auth.login.failure", login, "", "invalid_credentials", "")
 		return nil, nil, domain.ErrInvalidCredentials
 	}
 	if err != nil {
 		return nil, nil, err
 	}
 	if !s.Crypto.VerifyPassword(*u.PasswordHash, password) {
+		s.loginAudit(ctx, "auth.login.failure", login, "", "invalid_credentials", u.ID)
 		return nil, nil, domain.ErrInvalidCredentials
 	}
 	required, err := s.Repo.RoleRequiresTwoFactor(ctx, u.RoleID)
@@ -72,11 +89,16 @@ func (s *Service) Login(ctx context.Context, login, password, captchaID, captcha
 		return nil, nil, err
 	}
 	if required || (err == nil && tf.Enabled()) {
+		s.loginAudit(ctx, "auth.login.two_factor_challenge", login, "", "challenge", u.ID)
 		ch, err := s.challenge(ctx, u)
 		return nil, ch, err
 	}
 	sess, err := s.issueSession(ctx, u, cl)
-	return sess, nil, err
+	if err != nil {
+		return nil, nil, err
+	}
+	s.loginAudit(ctx, "auth.login.success", login, "", "success", u.ID)
+	return sess, nil, nil
 }
 
 func isEmail(login string) (string, bool) {
@@ -91,11 +113,13 @@ func isEmail(login string) (string, bool) {
 // never distinguish between wrong captcha, mitra, username, or password.
 func (s *Service) LoginMitra(ctx context.Context, mitraKode, username, password, captchaID, captcha string, cl domain.Client) (*domain.Session, *domain.Challenge, error) {
 	if err := s.Captcha.Verify(ctx, captchaID, captcha); err != nil {
+		s.loginAudit(ctx, "auth.login_mitra.failure", username, mitraKode, "invalid_captcha", "")
 		return nil, nil, err
 	}
 	m, err := s.Repo.MitraByKode(ctx, mitraKode)
 	if notFound(err) || (err == nil && !m.IsActive) {
 		s.Crypto.BurnPassword(password)
+		s.loginAudit(ctx, "auth.login_mitra.failure", username, mitraKode, "invalid_credentials", "")
 		return nil, nil, domain.ErrLoginInvalid
 	}
 	if err != nil {
@@ -104,12 +128,14 @@ func (s *Service) LoginMitra(ctx context.Context, mitraKode, username, password,
 	u, err := s.Repo.UserByUsernameAndMitra(ctx, username, m.ID)
 	if notFound(err) || (err == nil && !u.CanAuthenticate()) {
 		s.Crypto.BurnPassword(password)
+		s.loginAudit(ctx, "auth.login_mitra.failure", username, mitraKode, "invalid_credentials", "")
 		return nil, nil, domain.ErrLoginInvalid
 	}
 	if err != nil {
 		return nil, nil, err
 	}
 	if !s.Crypto.VerifyPassword(*u.PasswordHash, password) {
+		s.loginAudit(ctx, "auth.login_mitra.failure", username, mitraKode, "invalid_credentials", u.ID)
 		return nil, nil, domain.ErrLoginInvalid
 	}
 	required, err := s.Repo.RoleRequiresTwoFactor(ctx, u.RoleID)
@@ -121,11 +147,16 @@ func (s *Service) LoginMitra(ctx context.Context, mitraKode, username, password,
 		return nil, nil, err
 	}
 	if required || (err == nil && tf.Enabled()) {
+		s.loginAudit(ctx, "auth.login_mitra.two_factor_challenge", username, mitraKode, "challenge", u.ID)
 		ch, err := s.challenge(ctx, u)
 		return nil, ch, err
 	}
 	sess, err := s.issueSession(ctx, u, cl)
-	return sess, nil, err
+	if err != nil {
+		return nil, nil, err
+	}
+	s.loginAudit(ctx, "auth.login_mitra.success", username, mitraKode, "success", u.ID)
+	return sess, nil, nil
 }
 
 func (s *Service) issueSession(ctx context.Context, u domain.User, cl domain.Client) (*domain.Session, error) {

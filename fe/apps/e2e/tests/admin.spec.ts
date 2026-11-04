@@ -113,6 +113,19 @@ test("create a user from the dialog", async ({ page }) => {
   expect(problems).toEqual([])
 })
 
+// Proves the app's front door is the mitra login: opening the root address
+// lands on /login-mitra, while the Superadmin login stays at /login.
+test("root address lands on the mitra login", async ({ page }) => {
+  await page.goto("/")
+  await expect(page).toHaveURL(/\/login-mitra/)
+  await expect(page.getByLabel("Kode Mitra")).toBeVisible()
+
+  // The Superadmin login page is still reachable and unchanged.
+  await page.goto("/login")
+  await expect(page).toHaveURL(/\/login/)
+  await expect(page.getByLabel("Username atau Email")).toBeVisible()
+})
+
 // Proves the /login-mitra route signs a mitra user in and that the mitra-only
 // menus (Roles, Settings, Mitra) are hidden from them.
 test("sign in as mitra via /login-mitra", async ({ page }) => {

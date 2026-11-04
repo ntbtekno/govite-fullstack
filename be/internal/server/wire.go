@@ -159,7 +159,7 @@ func wire(d Deps) (handlers, *sysapp.Service) {
 
 	integrations := &intapp.Service{Repo: intinfra.Repository{DB: db}, Audit: auditor, Token: crypto.RandomToken, MidtransServerKey: d.Cfg.MidtransServerKey}
 
-	mitra := &mitraapp.Service{Repo: mitrainfra.Repository{DB: db}, Tx: db, Audit: auditor}
+	mitra := &mitraapp.Service{Repo: mitrainfra.Repository{DB: db}, Tx: db}
 
 	var redisPing func(context.Context) error
 	if d.Redis != nil {

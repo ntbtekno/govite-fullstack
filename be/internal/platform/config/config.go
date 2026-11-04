@@ -57,6 +57,26 @@ type Config struct {
 
 func (c Config) Production() bool { return c.Env == "production" }
 
+// E2ECaptchaOverride returns the pinned captcha code only outside production.
+// In production it is always empty, so a stray E2E_CAPTCHA_CODE in the
+// environment can never weaken the captcha on a live server.
+func (c Config) E2ECaptchaOverride() string {
+	if c.Production() {
+		return ""
+	}
+	return c.E2ECaptchaCode
+}
+
+// E2EMitraSeed reports whether the throwaway e2e mitra/admin should be seeded,
+// and its three values, or ok=false. It is always disabled in production so the
+// seed can never create a backdoor account on a live server.
+func (c Config) E2EMitraSeed() (kode, username, password string, ok bool) {
+	if c.Production() || c.E2EMitraKode == "" || c.E2EMitraUsername == "" || c.E2EMitraPassword == "" {
+		return "", "", "", false
+	}
+	return c.E2EMitraKode, c.E2EMitraUsername, c.E2EMitraPassword, true
+}
+
 // Load reads .env (if present) then the environment. Fails fast on bad config.
 func Load() (Config, error) {
 	_ = godotenv.Load()

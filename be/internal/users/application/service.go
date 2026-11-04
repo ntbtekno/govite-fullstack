@@ -40,6 +40,20 @@ func visible(target domain.User, sc domain.Scope) bool {
 	return true
 }
 
+// denyCrossMitra records a refused cross-mitra access. The handler still
+// returns 404 so the caller cannot enumerate users, but the attempt is kept in
+// the audit log with the actor and the mitra it tried to reach.
+func (s *Service) denyCrossMitra(ctx context.Context, action, targetID string, target domain.User, sc domain.Scope) {
+	if s.Audit == nil {
+		return
+	}
+	s.Audit.Record(ctx, action, "user", targetID, nil, map[string]any{
+		"outcome":     "cross_mitra_denied",
+		"actorMitra":  sc.MitraID,
+		"targetMitra": target.MitraID,
+	})
+}
+
 func (s *Service) Get(ctx context.Context, sc domain.Scope, id string) (domain.User, error) {
 	u, err := s.Repo.Get(ctx, id)
 	if err != nil {
@@ -47,6 +61,7 @@ func (s *Service) Get(ctx context.Context, sc domain.Scope, id string) (domain.U
 	}
 	if !visible(u, sc) {
 		// 404, not 403: a mitra cannot enumerate other mitra's users.
+		s.denyCrossMitra(ctx, "user.get_cross_mitra", id, u, sc)
 		return domain.User{}, domain.ErrNotFound
 	}
 	return u, nil
@@ -128,6 +143,7 @@ func (s *Service) Update(ctx context.Context, sc domain.Scope, id string, c doma
 		return cur, err
 	}
 	if !visible(cur, sc) {
+		s.denyCrossMitra(ctx, "user.update_cross_mitra", id, cur, sc)
 		return cur, domain.ErrNotFound
 	}
 	// A mitra caller may neither reassign mitra_id nor pick a role outside the
@@ -169,6 +185,7 @@ func (s *Service) Remove(ctx context.Context, sc domain.Scope, id string) (domai
 		return cur, err
 	}
 	if !visible(cur, sc) {
+		s.denyCrossMitra(ctx, "user.delete_cross_mitra", id, cur, sc)
 		return cur, domain.ErrNotFound
 	}
 	if actor(ctx) == id {
@@ -196,6 +213,7 @@ func (s *Service) Restore(ctx context.Context, sc domain.Scope, id string) (doma
 		return cur, err
 	}
 	if !visible(cur, sc) {
+		s.denyCrossMitra(ctx, "user.restore_cross_mitra", id, cur, sc)
 		return cur, domain.ErrNotFound
 	}
 	if cur.DeletedAt == nil {
@@ -213,6 +231,7 @@ func (s *Service) Reinvite(ctx context.Context, sc domain.Scope, id string) erro
 		return err
 	}
 	if !visible(u, sc) {
+		s.denyCrossMitra(ctx, "user.invite_cross_mitra", id, u, sc)
 		return domain.ErrNotFound
 	}
 	if u.DeletedAt != nil {
@@ -230,6 +249,7 @@ func (s *Service) ResetPassword(ctx context.Context, sc domain.Scope, id, passwo
 		return err
 	}
 	if !visible(u, sc) {
+		s.denyCrossMitra(ctx, "user.reset_password_cross_mitra", id, u, sc)
 		return domain.ErrNotFound
 	}
 	hash, err := s.Creds.HashPassword(password)

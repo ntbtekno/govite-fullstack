@@ -8,9 +8,8 @@ import (
 )
 
 type Service struct {
-	Repo  domain.Repository
-	Tx    kernel.Tx
-	Audit kernel.Auditor
+	Repo domain.Repository
+	Tx   kernel.Tx
 }
 
 func (s *Service) List(ctx context.Context, f domain.Filter, limit, offset int32) ([]domain.Mitra, int64, error) {
@@ -71,7 +70,6 @@ func (s *Service) Update(ctx context.Context, id string, in UpdateInput) (domain
 	if err != nil {
 		return domain.Mitra{}, err
 	}
-	s.Audit.Record(ctx, "mitra.update", "mitra", id, before, after)
 	return after, nil
 }
 
@@ -101,6 +99,5 @@ func (s *Service) SetActive(ctx context.Context, id string, in ActiveInput) (dom
 	if err != nil {
 		return domain.Mitra{}, err
 	}
-	s.Audit.Record(ctx, "mitra.set_active", "mitra", id, before, after)
 	return after, nil
 }

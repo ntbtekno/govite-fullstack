@@ -429,6 +429,130 @@ func TestMitraUserIsolation(t *testing.T) {
 	_ = superAdminID
 }
 
+// TestMitraChangesAreAudited proves Milestone 5 audit for mitra changes: a
+// Superadmin creating, renaming and deactivating a mitra leaves one audit row
+// each (mitra.create, mitra.update, mitra.set_active).
+func TestMitraChangesAreAudited(t *testing.T) {
+	e := setup(t)
+
+	e.seedUser("root@test.local", all...)
+	superTok, _ := e.login("root@test.local")
+
+	// Create.
+	r := e.do("POST", "/mitra", map[string]any{"kodeMitra": "MTR-AUD", "nama": "Mitra Audit"}, bearer(superTok))
+	expect(t, r, 201)
+	id := r.data()["id"].(string)
+
+	// Rename.
+	expect(t, e.do("PUT", "/mitra/"+id, map[string]any{"nama": "Mitra Audit Baru"}, bearer(superTok)), 200)
+
+	// Deactivate.
+	expect(t, e.do("PATCH", "/mitra/"+id+"/active", map[string]any{"isActive": false}, bearer(superTok)), 200)
+
+	for action, entityID := range map[string]string{
+		"mitra.create":     id,
+		"mitra.update":     id,
+		"mitra.set_active": id,
+	} {
+		rows := e.do("GET", "/audit?action="+action, nil, bearer(superTok))
+		expect(t, rows, 200)
+		data := rows.Body["data"].([]any)
+		if len(data) != 1 {
+			t.Fatalf("expected 1 %s audit row, got %d: %s", action, len(data), rows.Raw)
+		}
+		row := data[0].(map[string]any)
+		if row["entityType"] != "mitra" || row["entityId"] != entityID {
+			t.Fatalf("%s audit row must target the mitra: %s", action, rows.Raw)
+		}
+	}
+}
+
+// its users out: their refresh token stops working immediately.
+// TestLoginAuditRecordsAttemptsWithoutSecrets proves Milestone 5 audit: a
+// failed and a successful login are both recorded, a wrong captcha is recorded,
+// and the audit rows never contain the password or the captcha answer.
+func TestLoginAuditRecordsAttemptsWithoutSecrets(t *testing.T) {
+	e := setup(t)
+	userID, _ := e.seedUser("u@test.local", all...)
+
+	// A failed attempt with a wrong password (valid captcha) is recorded.
+	id, answer := e.solveCaptcha()
+	expect(t, e.do("POST", "/auth/login", map[string]string{"login": "u@test.local", "password": "wrong-password-xyz", "captchaId": id, "captcha": answer}), 401, "INVALID_CREDENTIALS")
+
+	// A failed attempt with a wrong captcha is recorded too.
+	id2, _ := e.solveCaptcha()
+	expect(t, e.do("POST", "/auth/login", map[string]string{"login": "u@test.local", "password": password, "captchaId": id2, "captcha": "ZZZZZ"}), 401, "INVALID_CAPTCHA")
+
+	// A successful login is recorded.
+	_, _ = e.login("u@test.local")
+
+	adminTok, _ := e.login("u@test.local")
+
+	fail := e.do("GET", "/audit?action=auth.login.failure", nil, bearer(adminTok))
+	expect(t, fail, 200)
+	if n := len(fail.Body["data"].([]any)); n < 2 {
+		t.Fatalf("expected at least 2 login failures recorded, got %d: %s", n, fail.Raw)
+	}
+	ok := e.do("GET", "/audit?action=auth.login.success", nil, bearer(adminTok))
+	expect(t, ok, 200)
+	if n := len(ok.Body["data"].([]any)); n < 1 {
+		t.Fatalf("expected a login success recorded, got %d: %s", n, ok.Raw)
+	}
+
+	// No audit row may leak the password or the captcha answer.
+	for _, path := range []string{"/audit?action=auth.login.failure", "/audit?action=auth.login.success"} {
+		raw := string(e.do("GET", path, nil, bearer(adminTok)).Raw)
+		if strings.Contains(raw, password) || strings.Contains(raw, "wrong-password-xyz") || strings.Contains(raw, "ZZZZZ") {
+			t.Fatalf("audit leaked a secret: %s", raw)
+		}
+	}
+	_ = userID
+}
+
+// TestCrossMitraAccessIsAudited proves Milestone 5: a mitra user reaching for
+// another mitra's user still gets 404, and the refusal is recorded as an audit
+// entry so an operator can see the attempt.
+func TestCrossMitraAccessIsAudited(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+
+	mitraA := e.seedMitra("MTR-XA", "Mitra X A")
+	mitraB := e.seedMitra("MTR-XB", "Mitra X B")
+
+	adminRole := kernel.NewID()
+	must(t, e.q.CreateRole(ctx, store.CreateRoleParams{ID: adminRole, Name: "MITRA_ADMIN"}))
+	perms := []policy.Permission{{Resource: "users", Action: "manage"}, {Resource: "users", Action: "view"}}
+	for _, p := range perms {
+		must(t, e.q.InsertRolePermission(ctx, store.InsertRolePermissionParams{ID: kernel.NewID(), RoleID: adminRole, Resource: p.Resource, Action: p.Action, Scope: "mitra"}))
+	}
+	hash, _ := crypto.HashPassword(password)
+	name := "Admin X"
+	must(t, e.q.CreateUser(ctx, store.CreateUserParams{ID: kernel.NewID(), Email: "xadmin@test.local", FullName: &name, RoleID: adminRole, PasswordHash: &hash, MitraID: &mitraA}))
+	_, err := e.pool.Exec(ctx, `UPDATE "user" SET username = 'x-admin' WHERE email = 'xadmin@test.local'`)
+	must(t, err)
+
+	userB, _ := e.seedMitraUser("xb@test.local", "xb-user", mitraB, "mitra", perms...)
+
+	tokA, _ := e.loginMitra("MTR-XA", "x-admin")
+
+	// The cross-mitra read is a 404 (no enumeration)...
+	expect(t, e.do("GET", "/users/"+userB, nil, bearer(tokA)), 404, "USER_NOT_FOUND")
+
+	// ...and a Superadmin sees the recorded attempt.
+	e.seedUser("root@test.local", all...)
+	superTok, _ := e.login("root@test.local")
+	r := e.do("GET", "/audit?action=user.get_cross_mitra", nil, bearer(superTok))
+	expect(t, r, 200)
+	rows := r.Body["data"].([]any)
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 cross-mitra audit row, got %d: %s", len(rows), r.Raw)
+	}
+	row := rows[0].(map[string]any)
+	if row["entityId"] != userB {
+		t.Fatalf("audit should point at the target user: %s", r.Raw)
+	}
+}
+
 // TestMitraDeactivationRevokesSessions proves that switching a mitra off signs
 // its users out: their refresh token stops working immediately.
 func TestMitraDeactivationRevokesSessions(t *testing.T) {
@@ -455,6 +579,47 @@ func TestMitraDeactivationRevokesSessions(t *testing.T) {
 	id, answer := e.solveCaptcha()
 	r := e.do("POST", "/auth/login-mitra", map[string]string{"mitraKode": "MTR-OFF", "username": "m1", "password": password, "captchaId": id, "captcha": answer})
 	expect(t, r, 401)
+	_ = ctx
+}
+
+// TestMovingUserBetweenMitrasRevokesOldRefresh proves that when a Superadmin
+// moves a user from one mitra to another, the user's existing refresh session
+// is revoked: the old refresh token is rejected right after the move, so the
+// stale JWT (which still carries the old mitra_id) cannot be renewed.
+func TestMovingUserBetweenMitrasRevokesOldRefresh(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+
+	mitraA := e.seedMitra("MTR-MV-A", "Mitra Move A")
+	mitraB := e.seedMitra("MTR-MV-B", "Mitra Move B")
+
+	// Superadmin to perform the move.
+	e.seedUser("root@test.local", all...)
+	superTok, _ := e.login("root@test.local")
+
+	// A mitra user in Mitra A with an active session.
+	userID, _ := e.seedMitraUser("mv@test.local", "mv-user", mitraA, "mitra", policy.Permission{Resource: "users", Action: "view"})
+	_, refresh := e.loginMitra("MTR-MV-A", "mv-user")
+	if refresh == nil {
+		t.Fatal("no refresh cookie")
+	}
+
+	// Move the user to Mitra B as Superadmin.
+	expect(t, e.do("PATCH", "/users/"+userID, map[string]any{"mitraId": mitraB}, bearer(superTok)), 200)
+	after := e.do("GET", "/users/"+userID, nil, bearer(superTok))
+	expect(t, after, 200)
+	if after.data()["mitraId"] != mitraB {
+		t.Fatalf("user was not moved to Mitra B: %s", after.Raw)
+	}
+
+	// The pre-move refresh token is now dead; the family was revoked.
+	expect(t, e.do("POST", "/auth/refresh", nil, cookie(refresh)), 401, "INVALID_REFRESH_TOKEN")
+
+	// The user can still log in to its new mitra.
+	_, fresh := e.loginMitra("MTR-MV-B", "mv-user")
+	if fresh == nil {
+		t.Fatal("no refresh cookie after re-login to new mitra")
+	}
 	_ = ctx
 }
 
