@@ -4,6 +4,7 @@ import {
   LayoutDashboardIcon,
   MegaphoneIcon,
   ActivityIcon,
+  BuildingIcon,
   ScrollTextIcon,
   SettingsIcon,
   ShieldIcon,
@@ -41,7 +42,13 @@ const administration: Guarded[] = [
     title: "Users",
     url: "/admin/administration/users",
     icon: <UsersIcon />,
-    permission: ["users", "manage"],
+    permission: ["users", "view"],
+  },
+  {
+    title: "Mitra",
+    url: "/admin/administration/mitra",
+    icon: <BuildingIcon />,
+    permission: ["mitra", "view"],
   },
   {
     title: "Announcements",

@@ -7,6 +7,12 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 port="${E2E_API_PORT:-3010}"
 export SUPER_ADMIN_EMAIL="${SUPER_ADMIN_EMAIL:-e2e@app.local}"
 export SUPER_ADMIN_PASSWORD="${SUPER_ADMIN_PASSWORD:-E2eSecret123!}"
+# Non-production test hooks: a pinned captcha code and a throwaway mitra so the
+# browser can sign in to both login forms.
+export E2E_CAPTCHA_CODE="${E2E_CAPTCHA_CODE:-ABCDE}"
+export E2E_MITRA_KODE="${E2E_MITRA_KODE:-MTR-E2E}"
+export E2E_MITRA_USERNAME="${E2E_MITRA_USERNAME:-e2e-mitra}"
+export E2E_MITRA_PASSWORD="${E2E_MITRA_PASSWORD:-E2eMitra123!}"
 export API_PROXY_TARGET="http://localhost:$port"
 
 cd "$root/be"

@@ -485,6 +485,16 @@ func (q *Queries) RevokeFamily(ctx context.Context, id string) error {
 	return err
 }
 
+const revokeMitraFamilies = `-- name: RevokeMitraFamilies :exec
+UPDATE refresh_token_family SET revoked_at = now()
+WHERE user_id IN (SELECT id FROM "user" WHERE mitra_id = $1) AND revoked_at IS NULL
+`
+
+func (q *Queries) RevokeMitraFamilies(ctx context.Context, mitraID *string) error {
+	_, err := q.db.Exec(ctx, revokeMitraFamilies, mitraID)
+	return err
+}
+
 const revokeOtherFamilies = `-- name: RevokeOtherFamilies :exec
 UPDATE refresh_token_family SET revoked_at = now()
 WHERE user_id = $1 AND revoked_at IS NULL AND id <> $2

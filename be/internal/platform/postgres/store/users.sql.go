@@ -14,15 +14,17 @@ const countUsers = `-- name: CountUsers :one
 SELECT count(*) FROM "user" u
 WHERE ($1::text IS NULL OR u.role_id = $1)
   AND ($2::bool IS NULL OR u.is_active = $2)
-  AND (CASE WHEN $3::bool THEN u.deleted_at IS NOT NULL ELSE u.deleted_at IS NULL END)
-  AND ($4::text IS NULL
-       OR u.email ILIKE '%' || $4 || '%'
-       OR u.full_name ILIKE '%' || $4 || '%')
+  AND ($3::text IS NULL OR u.mitra_id = $3)
+  AND (CASE WHEN $4::bool THEN u.deleted_at IS NOT NULL ELSE u.deleted_at IS NULL END)
+  AND ($5::text IS NULL
+       OR u.email ILIKE '%' || $5 || '%'
+       OR u.full_name ILIKE '%' || $5 || '%')
 `
 
 type CountUsersParams struct {
 	RoleID   *string
 	IsActive *bool
+	MitraID  *string
 	Deleted  bool
 	Search   *string
 }
@@ -31,6 +33,7 @@ func (q *Queries) CountUsers(ctx context.Context, arg CountUsersParams) (int64, 
 	row := q.db.QueryRow(ctx, countUsers,
 		arg.RoleID,
 		arg.IsActive,
+		arg.MitraID,
 		arg.Deleted,
 		arg.Search,
 	)
@@ -40,7 +43,7 @@ func (q *Queries) CountUsers(ctx context.Context, arg CountUsersParams) (int64, 
 }
 
 const createUser = `-- name: CreateUser :exec
-INSERT INTO "user" (id, email, full_name, role_id, password_hash) VALUES ($1, $2, $3, $4, $5)
+INSERT INTO "user" (id, email, full_name, role_id, password_hash, mitra_id) VALUES ($1, $2, $3, $4, $5, $6)
 `
 
 type CreateUserParams struct {
@@ -49,6 +52,7 @@ type CreateUserParams struct {
 	FullName     *string
 	RoleID       string
 	PasswordHash *string
+	MitraID      *string
 }
 
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) error {
@@ -58,6 +62,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) error {
 		arg.FullName,
 		arg.RoleID,
 		arg.PasswordHash,
+		arg.MitraID,
 	)
 	return err
 }
@@ -126,27 +131,29 @@ SELECT u.id, u.role_id, u.email, u.full_name, u.password_hash, u.avatar_key, u.i
 FROM "user" u JOIN role r ON r.id = u.role_id
 WHERE ($1::text IS NULL OR u.role_id = $1)
   AND ($2::bool IS NULL OR u.is_active = $2)
-  AND (CASE WHEN $3::bool THEN u.deleted_at IS NOT NULL ELSE u.deleted_at IS NULL END)
-  AND ($4::text IS NULL
-       OR u.email ILIKE '%' || $4 || '%'
-       OR u.full_name ILIKE '%' || $4 || '%')
+  AND ($3::text IS NULL OR u.mitra_id = $3)
+  AND (CASE WHEN $4::bool THEN u.deleted_at IS NOT NULL ELSE u.deleted_at IS NULL END)
+  AND ($5::text IS NULL
+       OR u.email ILIKE '%' || $5 || '%'
+       OR u.full_name ILIKE '%' || $5 || '%')
 ORDER BY
-  CASE WHEN $5::text = 'email' AND $6::text = 'asc' THEN u.email END ASC,
-  CASE WHEN $5 = 'email' AND $6 = 'desc' THEN u.email END DESC,
-  CASE WHEN $5 = 'fullName' AND $6 = 'asc' THEN u.full_name END ASC NULLS LAST,
-  CASE WHEN $5 = 'fullName' AND $6 = 'desc' THEN u.full_name END DESC NULLS LAST,
-  CASE WHEN $5 = 'lastLoginAt' AND $6 = 'asc' THEN u.last_login_at END ASC NULLS LAST,
-  CASE WHEN $5 = 'lastLoginAt' AND $6 = 'desc' THEN u.last_login_at END DESC NULLS LAST,
-  CASE WHEN $5 = 'createdAt' AND $6 = 'asc' THEN u.created_at END ASC,
-  CASE WHEN $5 = 'createdAt' AND $6 = 'desc' THEN u.created_at END DESC,
-  CASE WHEN $6 = 'asc' THEN u.id END ASC,
+  CASE WHEN $6::text = 'email' AND $7::text = 'asc' THEN u.email END ASC,
+  CASE WHEN $6 = 'email' AND $7 = 'desc' THEN u.email END DESC,
+  CASE WHEN $6 = 'fullName' AND $7 = 'asc' THEN u.full_name END ASC NULLS LAST,
+  CASE WHEN $6 = 'fullName' AND $7 = 'desc' THEN u.full_name END DESC NULLS LAST,
+  CASE WHEN $6 = 'lastLoginAt' AND $7 = 'asc' THEN u.last_login_at END ASC NULLS LAST,
+  CASE WHEN $6 = 'lastLoginAt' AND $7 = 'desc' THEN u.last_login_at END DESC NULLS LAST,
+  CASE WHEN $6 = 'createdAt' AND $7 = 'asc' THEN u.created_at END ASC,
+  CASE WHEN $6 = 'createdAt' AND $7 = 'desc' THEN u.created_at END DESC,
+  CASE WHEN $7 = 'asc' THEN u.id END ASC,
   u.id DESC
-LIMIT $8 OFFSET $7
+LIMIT $9 OFFSET $8
 `
 
 type ListUsersParams struct {
 	RoleID   *string
 	IsActive *bool
+	MitraID  *string
 	Deleted  bool
 	Search   *string
 	Sort     string
@@ -164,6 +171,7 @@ func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]ListUse
 	rows, err := q.db.Query(ctx, listUsers,
 		arg.RoleID,
 		arg.IsActive,
+		arg.MitraID,
 		arg.Deleted,
 		arg.Search,
 		arg.Sort,
@@ -252,14 +260,17 @@ const updateUser = `-- name: UpdateUser :exec
 UPDATE "user" SET
   full_name = COALESCE($1, full_name),
   role_id = COALESCE($2, role_id),
-  is_active = COALESCE($3, is_active)
-WHERE id = $4
+  is_active = COALESCE($3, is_active),
+  mitra_id = CASE WHEN $4::bool THEN $5 ELSE mitra_id END
+WHERE id = $6
 `
 
 type UpdateUserParams struct {
 	FullName *string
 	RoleID   *string
 	IsActive *bool
+	SetMitra bool
+	MitraID  *string
 	ID       string
 }
 
@@ -268,6 +279,8 @@ func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) error {
 		arg.FullName,
 		arg.RoleID,
 		arg.IsActive,
+		arg.SetMitra,
+		arg.MitraID,
 		arg.ID,
 	)
 	return err

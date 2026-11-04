@@ -14,6 +14,7 @@ import { Route as AcceptInviteRouteImport } from './routes/accept-invite'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as LoginMitraRouteImport } from './routes/login-mitra'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as VerifyEmailRouteImport } from './routes/verify-email'
 import { Route as AdminAccountRouteImport } from './routes/admin.account'
@@ -22,6 +23,7 @@ import { Route as AdminNotificationsRouteImport } from './routes/admin.notificat
 import { Route as AdminAdministrationAnnouncementsRouteImport } from './routes/admin.administration.announcements'
 import { Route as AdminAdministrationApiKeysRouteImport } from './routes/admin.administration.api-keys'
 import { Route as AdminAdministrationAuditRouteImport } from './routes/admin.administration.audit'
+import { Route as AdminAdministrationMitraRouteImport } from './routes/admin.administration.mitra'
 import { Route as AdminAdministrationPermissionsRouteImport } from './routes/admin.administration.permissions'
 import { Route as AdminAdministrationRolesRouteImport } from './routes/admin.administration.roles'
 import { Route as AdminAdministrationSettingsRouteImport } from './routes/admin.administration.settings'
@@ -54,6 +56,11 @@ const ForgotPasswordRoute = ForgotPasswordRouteImport.update({
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LoginMitraRoute = LoginMitraRouteImport.update({
+  id: '/login-mitra',
+  path: '/login-mitra',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ResetPasswordRoute = ResetPasswordRouteImport.update({
@@ -97,6 +104,12 @@ const AdminAdministrationAuditRoute =
   AdminAdministrationAuditRouteImport.update({
     id: '/administration/audit',
     path: '/administration/audit',
+    getParentRoute: () => AdminRoute,
+  } as any)
+const AdminAdministrationMitraRoute =
+  AdminAdministrationMitraRouteImport.update({
+    id: '/administration/mitra',
+    path: '/administration/mitra',
     getParentRoute: () => AdminRoute,
   } as any)
 const AdminAdministrationPermissionsRoute =
@@ -154,6 +167,7 @@ export interface FileRoutesByFullPath {
   '/admin': typeof AdminRouteWithChildren
   '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
+  '/login-mitra': typeof LoginMitraRoute
   '/reset-password': typeof ResetPasswordRoute
   '/verify-email': typeof VerifyEmailRoute
   '/admin/account': typeof AdminAccountRoute
@@ -162,6 +176,7 @@ export interface FileRoutesByFullPath {
   '/admin/administration/announcements': typeof AdminAdministrationAnnouncementsRoute
   '/admin/administration/api-keys': typeof AdminAdministrationApiKeysRoute
   '/admin/administration/audit': typeof AdminAdministrationAuditRoute
+  '/admin/administration/mitra': typeof AdminAdministrationMitraRoute
   '/admin/administration/permissions': typeof AdminAdministrationPermissionsRoute
   '/admin/administration/roles': typeof AdminAdministrationRolesRoute
   '/admin/administration/settings': typeof AdminAdministrationSettingsRoute
@@ -177,6 +192,7 @@ export interface FileRoutesByTo {
   '/admin': typeof AdminRouteWithChildren
   '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
+  '/login-mitra': typeof LoginMitraRoute
   '/reset-password': typeof ResetPasswordRoute
   '/verify-email': typeof VerifyEmailRoute
   '/admin/account': typeof AdminAccountRoute
@@ -185,6 +201,7 @@ export interface FileRoutesByTo {
   '/admin/administration/announcements': typeof AdminAdministrationAnnouncementsRoute
   '/admin/administration/api-keys': typeof AdminAdministrationApiKeysRoute
   '/admin/administration/audit': typeof AdminAdministrationAuditRoute
+  '/admin/administration/mitra': typeof AdminAdministrationMitraRoute
   '/admin/administration/permissions': typeof AdminAdministrationPermissionsRoute
   '/admin/administration/roles': typeof AdminAdministrationRolesRoute
   '/admin/administration/settings': typeof AdminAdministrationSettingsRoute
@@ -201,6 +218,7 @@ export interface FileRoutesById {
   '/admin': typeof AdminRouteWithChildren
   '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
+  '/login-mitra': typeof LoginMitraRoute
   '/reset-password': typeof ResetPasswordRoute
   '/verify-email': typeof VerifyEmailRoute
   '/admin/account': typeof AdminAccountRoute
@@ -209,6 +227,7 @@ export interface FileRoutesById {
   '/admin/administration/announcements': typeof AdminAdministrationAnnouncementsRoute
   '/admin/administration/api-keys': typeof AdminAdministrationApiKeysRoute
   '/admin/administration/audit': typeof AdminAdministrationAuditRoute
+  '/admin/administration/mitra': typeof AdminAdministrationMitraRoute
   '/admin/administration/permissions': typeof AdminAdministrationPermissionsRoute
   '/admin/administration/roles': typeof AdminAdministrationRolesRoute
   '/admin/administration/settings': typeof AdminAdministrationSettingsRoute
@@ -226,6 +245,7 @@ export interface FileRouteTypes {
     | '/admin'
     | '/forgot-password'
     | '/login'
+    | '/login-mitra'
     | '/reset-password'
     | '/verify-email'
     | '/admin/account'
@@ -234,6 +254,7 @@ export interface FileRouteTypes {
     | '/admin/administration/announcements'
     | '/admin/administration/api-keys'
     | '/admin/administration/audit'
+    | '/admin/administration/mitra'
     | '/admin/administration/permissions'
     | '/admin/administration/roles'
     | '/admin/administration/settings'
@@ -249,6 +270,7 @@ export interface FileRouteTypes {
     | '/admin'
     | '/forgot-password'
     | '/login'
+    | '/login-mitra'
     | '/reset-password'
     | '/verify-email'
     | '/admin/account'
@@ -257,6 +279,7 @@ export interface FileRouteTypes {
     | '/admin/administration/announcements'
     | '/admin/administration/api-keys'
     | '/admin/administration/audit'
+    | '/admin/administration/mitra'
     | '/admin/administration/permissions'
     | '/admin/administration/roles'
     | '/admin/administration/settings'
@@ -272,6 +295,7 @@ export interface FileRouteTypes {
     | '/admin'
     | '/forgot-password'
     | '/login'
+    | '/login-mitra'
     | '/reset-password'
     | '/verify-email'
     | '/admin/account'
@@ -280,6 +304,7 @@ export interface FileRouteTypes {
     | '/admin/administration/announcements'
     | '/admin/administration/api-keys'
     | '/admin/administration/audit'
+    | '/admin/administration/mitra'
     | '/admin/administration/permissions'
     | '/admin/administration/roles'
     | '/admin/administration/settings'
@@ -296,6 +321,7 @@ export interface RootRouteChildren {
   AdminRoute: typeof AdminRouteWithChildren
   ForgotPasswordRoute: typeof ForgotPasswordRoute
   LoginRoute: typeof LoginRoute
+  LoginMitraRoute: typeof LoginMitraRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
   VerifyEmailRoute: typeof VerifyEmailRoute
 }
@@ -335,6 +361,13 @@ declare module '@tanstack/react-router' {
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/login-mitra': {
+      id: '/login-mitra'
+      path: '/login-mitra'
+      fullPath: '/login-mitra'
+      preLoaderRoute: typeof LoginMitraRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/reset-password': {
@@ -391,6 +424,13 @@ declare module '@tanstack/react-router' {
       path: '/administration/audit'
       fullPath: '/admin/administration/audit'
       preLoaderRoute: typeof AdminAdministrationAuditRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/administration/mitra': {
+      id: '/admin/administration/mitra'
+      path: '/administration/mitra'
+      fullPath: '/admin/administration/mitra'
+      preLoaderRoute: typeof AdminAdministrationMitraRouteImport
       parentRoute: typeof AdminRoute
     }
     '/admin/administration/permissions': {
@@ -459,6 +499,7 @@ interface AdminRouteChildren {
   AdminAdministrationAnnouncementsRoute: typeof AdminAdministrationAnnouncementsRoute
   AdminAdministrationApiKeysRoute: typeof AdminAdministrationApiKeysRoute
   AdminAdministrationAuditRoute: typeof AdminAdministrationAuditRoute
+  AdminAdministrationMitraRoute: typeof AdminAdministrationMitraRoute
   AdminAdministrationPermissionsRoute: typeof AdminAdministrationPermissionsRoute
   AdminAdministrationRolesRoute: typeof AdminAdministrationRolesRoute
   AdminAdministrationSettingsRoute: typeof AdminAdministrationSettingsRoute
@@ -476,6 +517,7 @@ const AdminRouteChildren: AdminRouteChildren = {
   AdminAdministrationAnnouncementsRoute: AdminAdministrationAnnouncementsRoute,
   AdminAdministrationApiKeysRoute: AdminAdministrationApiKeysRoute,
   AdminAdministrationAuditRoute: AdminAdministrationAuditRoute,
+  AdminAdministrationMitraRoute: AdminAdministrationMitraRoute,
   AdminAdministrationPermissionsRoute: AdminAdministrationPermissionsRoute,
   AdminAdministrationRolesRoute: AdminAdministrationRolesRoute,
   AdminAdministrationSettingsRoute: AdminAdministrationSettingsRoute,
@@ -494,6 +536,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminRoute: AdminRouteWithChildren,
   ForgotPasswordRoute: ForgotPasswordRoute,
   LoginRoute: LoginRoute,
+  LoginMitraRoute: LoginMitraRoute,
   ResetPasswordRoute: ResetPasswordRoute,
   VerifyEmailRoute: VerifyEmailRoute,
 }

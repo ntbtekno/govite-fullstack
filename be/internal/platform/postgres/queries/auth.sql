@@ -38,6 +38,10 @@ UPDATE refresh_token_family SET revoked_at = now() WHERE id = $1 AND revoked_at 
 -- name: RevokeUserFamilies :exec
 UPDATE refresh_token_family SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL;
 
+-- name: RevokeMitraFamilies :exec
+UPDATE refresh_token_family SET revoked_at = now()
+WHERE user_id IN (SELECT id FROM "user" WHERE mitra_id = $1) AND revoked_at IS NULL;
+
 -- name: RevokeOtherFamilies :exec
 UPDATE refresh_token_family SET revoked_at = now()
 WHERE user_id = $1 AND revoked_at IS NULL AND id <> $2;

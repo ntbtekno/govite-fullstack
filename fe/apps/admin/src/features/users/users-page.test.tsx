@@ -24,6 +24,12 @@ vi.mock("@/features/auth/require-permission", () => ({
     <>{children}</>
   ),
 }))
+vi.mock("@/lib/auth-context", () => ({
+  useAuth: () => ({
+    can: () => true,
+    user: { mitraId: null },
+  }),
+}))
 vi.mock("@/features/users/user-import-dialog", () => ({
   UserImportDialog: () => null,
 }))
@@ -41,6 +47,8 @@ vi.mock("@/features/users/api", () => ({
             fullName: "One",
             roleId: "role",
             roleName: "Admin",
+            mitraId: null,
+            mitraKode: null,
             isActive: true,
             invited: false,
             deletedAt: null,

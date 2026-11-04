@@ -11,22 +11,30 @@ import (
 )
 
 type Config struct {
-	Env                        string
-	Port                       int
-	WebURL                     string
-	CORSOrigins                []string
-	DatabaseURL                string
-	RedisURL                   string
-	JWTSecret                  string
-	RefreshPepper              string
-	SMTPHost                   string
-	SMTPPort                   int
-	SMTPUsername               string
-	SMTPPassword               string
-	SMTPFrom                   string
-	ThrottleLimit              int
-	LoginThrottleLimit         int
-	CaptchaThrottleLimit       int
+	Env                  string
+	Port                 int
+	WebURL               string
+	CORSOrigins          []string
+	DatabaseURL          string
+	RedisURL             string
+	JWTSecret            string
+	RefreshPepper        string
+	SMTPHost             string
+	SMTPPort             int
+	SMTPUsername         string
+	SMTPPassword         string
+	SMTPFrom             string
+	ThrottleLimit        int
+	LoginThrottleLimit   int
+	CaptchaThrottleLimit int
+	// E2ECaptchaCode, when set outside production, pins the captcha code so a
+	// headless browser test can log in. Ignored in production.
+	E2ECaptchaCode string
+	// E2E mitra seed: a throwaway mitra + admin for the browser e2e. Only used
+	// when E2EMitraKode/Username/Password are all set outside production.
+	E2EMitraKode               string
+	E2EMitraUsername           string
+	E2EMitraPassword           string
 	LogLevel                   string
 	SuperAdminEmail            string
 	SuperAdminPassword         string
@@ -94,6 +102,10 @@ func Load() (Config, error) {
 		ThrottleLimit:              num("THROTTLE_LIMIT", 100),
 		LoginThrottleLimit:         num("LOGIN_THROTTLE_LIMIT", 10),
 		CaptchaThrottleLimit:       num("CAPTCHA_THROTTLE_LIMIT", 30),
+		E2ECaptchaCode:             str("E2E_CAPTCHA_CODE", ""),
+		E2EMitraKode:               str("E2E_MITRA_KODE", ""),
+		E2EMitraUsername:           str("E2E_MITRA_USERNAME", ""),
+		E2EMitraPassword:           str("E2E_MITRA_PASSWORD", ""),
 		LogLevel:                   str("LOG_LEVEL", "info"),
 		SuperAdminEmail:            strings.ToLower(str("SUPER_ADMIN_EMAIL", "")),
 		SuperAdminPassword:         str("SUPER_ADMIN_PASSWORD", ""),

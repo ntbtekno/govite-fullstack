@@ -19,11 +19,41 @@ type Service struct {
 
 func actor(ctx context.Context) string { return kernel.PrincipalFrom(ctx).ID }
 
-func (s *Service) Get(ctx context.Context, id string) (domain.User, error) {
-	return s.Repo.Get(ctx, id)
+// mitraRoles are the only role names a mitra caller may assign to a user.
+var mitraRoles = map[string]bool{"mitra_admin": true, "mitra_staff": true}
+
+// applyScopeFilter constrains f to the caller's scope. A mitra scope forces
+// mitra_id and ignores any mitra_id the request tried to filter by.
+func applyScopeFilter(f *domain.Filter, sc domain.Scope) {
+	if mitraID, ok := sc.MitraFilter(); ok {
+		f.MitraID = &mitraID
+	}
 }
 
-func (s *Service) List(ctx context.Context, f domain.Filter, limit, offset int32) ([]domain.User, int64, error) {
+// visible reports whether the caller may see target. A mitra caller only sees
+// users of its own mitra; everyone else (all/self) is allowed here and further
+// constrained per-record by the caller.
+func visible(target domain.User, sc domain.Scope) bool {
+	if mitraID, ok := sc.MitraFilter(); ok {
+		return target.MitraID != nil && *target.MitraID == mitraID
+	}
+	return true
+}
+
+func (s *Service) Get(ctx context.Context, sc domain.Scope, id string) (domain.User, error) {
+	u, err := s.Repo.Get(ctx, id)
+	if err != nil {
+		return u, err
+	}
+	if !visible(u, sc) {
+		// 404, not 403: a mitra cannot enumerate other mitra's users.
+		return domain.User{}, domain.ErrNotFound
+	}
+	return u, nil
+}
+
+func (s *Service) List(ctx context.Context, sc domain.Scope, f domain.Filter, limit, offset int32) ([]domain.User, int64, error) {
+	applyScopeFilter(&f, sc)
 	total, err := s.Repo.Count(ctx, f)
 	if err != nil {
 		return nil, 0, err
@@ -32,17 +62,43 @@ func (s *Service) List(ctx context.Context, f domain.Filter, limit, offset int32
 	return rows, total, err
 }
 
-type CreateInput struct {
-	Email    string `json:"email" validate:"required,email"`
-	FullName string `json:"fullName" validate:"required,min=1,max=100"`
-	RoleID   string `json:"roleId" validate:"required,uuid"`
-	Password string `json:"password" validate:"omitempty,password"`
+// checkRoleAssignable refuses a role a mitra caller may not use (for example
+// Super Admin). A Superadmin (all/self scope without mitra) may assign any.
+func (s *Service) checkRoleAssignable(ctx context.Context, sc domain.Scope, roleID string) error {
+	if _, ok := sc.MitraFilter(); !ok {
+		return nil
+	}
+	name, err := s.Repo.RoleName(ctx, roleID)
+	if err != nil {
+		return err
+	}
+	if !mitraRoles[strings.ToLower(name)] {
+		return domain.ErrRoleNotAllowed
+	}
+	return nil
 }
 
-// Create adds a user. Without a password the user is invited by email.
-func (s *Service) Create(ctx context.Context, in CreateInput) (domain.User, error) {
+type CreateInput struct {
+	Email    string  `json:"email" validate:"required,email"`
+	FullName string  `json:"fullName" validate:"required,min=1,max=100"`
+	RoleID   string  `json:"roleId" validate:"required,uuid"`
+	Password string  `json:"password" validate:"omitempty,password"`
+	MitraID  *string `json:"mitraId" validate:"omitempty,uuid"`
+}
+
+// Create adds a user. Without a password the user is invited by email. A mitra
+// caller always creates into its own mitra; any mitraId in the request is
+// ignored.
+func (s *Service) Create(ctx context.Context, sc domain.Scope, in CreateInput) (domain.User, error) {
 	if ok, err := s.Repo.RoleExists(ctx, in.RoleID); err != nil || !ok {
 		return domain.User{}, domain.ErrInvalidRole
+	}
+	if err := s.checkRoleAssignable(ctx, sc, in.RoleID); err != nil {
+		return domain.User{}, err
+	}
+	mitraID := in.MitraID
+	if own, ok := sc.MitraFilter(); ok {
+		mitraID = &own
 	}
 	var hash *string
 	if in.Password != "" {
@@ -53,7 +109,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (domain.User, erro
 		hash = &h
 	}
 	id := kernel.NewID()
-	err := s.Repo.Create(ctx, domain.NewUser{ID: id, Email: strings.ToLower(strings.TrimSpace(in.Email)), FullName: strings.TrimSpace(in.FullName), RoleID: in.RoleID, PasswordHash: hash})
+	err := s.Repo.Create(ctx, domain.NewUser{ID: id, Email: strings.ToLower(strings.TrimSpace(in.Email)), FullName: strings.TrimSpace(in.FullName), RoleID: in.RoleID, PasswordHash: hash, MitraID: mitraID})
 	if err != nil {
 		return domain.User{}, err
 	}
@@ -64,12 +120,20 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (domain.User, erro
 	return u, err
 }
 
-// Update changes fields; a role change or deactivation signs the user out
-// in the same transaction.
-func (s *Service) Update(ctx context.Context, id string, c domain.Changes) (domain.User, error) {
+// Update changes fields; a role change, deactivation or mitra move signs the
+// user out in the same transaction.
+func (s *Service) Update(ctx context.Context, sc domain.Scope, id string, c domain.Changes) (domain.User, error) {
 	cur, err := s.Repo.Get(ctx, id)
 	if err != nil {
 		return cur, err
+	}
+	if !visible(cur, sc) {
+		return cur, domain.ErrNotFound
+	}
+	// A mitra caller may neither reassign mitra_id nor pick a role outside the
+	// mitra set. A Superadmin may move a user between mitras.
+	if _, ok := sc.MitraFilter(); ok {
+		c.MitraID = nil
 	}
 	revoke, err := cur.CheckUpdate(actor(ctx), c)
 	if err != nil {
@@ -78,6 +142,9 @@ func (s *Service) Update(ctx context.Context, id string, c domain.Changes) (doma
 	if c.RoleID != nil {
 		if ok, err := s.Repo.RoleExists(ctx, *c.RoleID); err != nil || !ok {
 			return cur, domain.ErrInvalidRole
+		}
+		if err := s.checkRoleAssignable(ctx, sc, *c.RoleID); err != nil {
+			return cur, err
 		}
 	}
 	err = s.Tx.Do(ctx, func(ctx context.Context) error {
@@ -96,10 +163,13 @@ func (s *Service) Update(ctx context.Context, id string, c domain.Changes) (doma
 }
 
 // Remove soft-deletes and signs out atomically; deleting twice is a no-op.
-func (s *Service) Remove(ctx context.Context, id string) (domain.User, error) {
+func (s *Service) Remove(ctx context.Context, sc domain.Scope, id string) (domain.User, error) {
 	cur, err := s.Repo.Get(ctx, id)
 	if err != nil {
 		return cur, err
+	}
+	if !visible(cur, sc) {
+		return cur, domain.ErrNotFound
 	}
 	if actor(ctx) == id {
 		return cur, domain.ErrModifySelf
@@ -120,10 +190,13 @@ func (s *Service) Remove(ctx context.Context, id string) (domain.User, error) {
 	return s.Repo.Get(ctx, id)
 }
 
-func (s *Service) Restore(ctx context.Context, id string) (domain.User, error) {
+func (s *Service) Restore(ctx context.Context, sc domain.Scope, id string) (domain.User, error) {
 	cur, err := s.Repo.Get(ctx, id)
 	if err != nil {
 		return cur, err
+	}
+	if !visible(cur, sc) {
+		return cur, domain.ErrNotFound
 	}
 	if cur.DeletedAt == nil {
 		return cur, domain.ErrNotDeleted
@@ -134,10 +207,13 @@ func (s *Service) Restore(ctx context.Context, id string) (domain.User, error) {
 	return s.Repo.Get(ctx, id)
 }
 
-func (s *Service) Reinvite(ctx context.Context, id string) error {
+func (s *Service) Reinvite(ctx context.Context, sc domain.Scope, id string) error {
 	u, err := s.Repo.Get(ctx, id)
 	if err != nil {
 		return err
+	}
+	if !visible(u, sc) {
+		return domain.ErrNotFound
 	}
 	if u.DeletedAt != nil {
 		return domain.ErrDeleted
@@ -148,9 +224,13 @@ func (s *Service) Reinvite(ctx context.Context, id string) error {
 	return s.Creds.SendInvite(ctx, u.ID, u.Email)
 }
 
-func (s *Service) ResetPassword(ctx context.Context, id, password string) error {
-	if _, err := s.Repo.Get(ctx, id); err != nil {
+func (s *Service) ResetPassword(ctx context.Context, sc domain.Scope, id, password string) error {
+	u, err := s.Repo.Get(ctx, id)
+	if err != nil {
 		return err
+	}
+	if !visible(u, sc) {
+		return domain.ErrNotFound
 	}
 	hash, err := s.Creds.HashPassword(password)
 	if err != nil {
@@ -172,7 +252,7 @@ type BulkFailure struct {
 
 // Bulk applies action to each distinct id. Domain errors are collected per
 // id; anything else aborts.
-func (s *Service) Bulk(ctx context.Context, ids []string, action string) (succeeded []string, failed []BulkFailure, err error) {
+func (s *Service) Bulk(ctx context.Context, sc domain.Scope, ids []string, action string) (succeeded []string, failed []BulkFailure, err error) {
 	succeeded, failed = []string{}, []BulkFailure{}
 	seen := map[string]bool{}
 	for _, id := range ids {
@@ -183,12 +263,12 @@ func (s *Service) Bulk(ctx context.Context, ids []string, action string) (succee
 		var err error
 		switch action {
 		case "delete":
-			_, err = s.Remove(ctx, id)
+			_, err = s.Remove(ctx, sc, id)
 		case "restore":
-			_, err = s.Restore(ctx, id)
+			_, err = s.Restore(ctx, sc, id)
 		default:
 			active := action == "activate"
-			_, err = s.Update(ctx, id, domain.Changes{IsActive: &active})
+			_, err = s.Update(ctx, sc, id, domain.Changes{IsActive: &active})
 		}
 		var de *kernel.Error
 		switch {

@@ -25,7 +25,7 @@ func (r Repository) toUser(u store.User, role string) domain.User {
 			avatar = &v
 		}
 	}
-	return domain.User{ID: u.ID, Email: u.Email, FullName: u.FullName, AvatarURL: avatar, RoleID: u.RoleID, RoleName: role, IsActive: u.IsActive, Invited: u.PasswordHash == nil, EmailVerifiedAt: u.EmailVerifiedAt, DeletedAt: u.DeletedAt, LastLoginAt: u.LastLoginAt, CreatedAt: u.CreatedAt}
+	return domain.User{ID: u.ID, Email: u.Email, FullName: u.FullName, AvatarURL: avatar, RoleID: u.RoleID, RoleName: role, MitraID: u.MitraID, IsActive: u.IsActive, Invited: u.PasswordHash == nil, EmailVerifiedAt: u.EmailVerifiedAt, DeletedAt: u.DeletedAt, LastLoginAt: u.LastLoginAt, CreatedAt: u.CreatedAt}
 }
 
 func (r Repository) Get(ctx context.Context, id string) (domain.User, error) {
@@ -36,11 +36,13 @@ func (r Repository) Get(ctx context.Context, id string) (domain.User, error) {
 		}
 		return domain.User{}, err
 	}
-	return r.toUser(row.User, row.RoleName), nil
+	u := r.toUser(row.User, row.RoleName)
+	u.MitraKode = row.KodeMitra
+	return u, nil
 }
 
 func (r Repository) List(ctx context.Context, f domain.Filter, limit, offset int32) ([]domain.User, error) {
-	rows, err := r.DB.Q(ctx).ListUsers(ctx, store.ListUsersParams{RoleID: f.RoleID, IsActive: f.IsActive, Deleted: f.Deleted, Search: f.Search, Sort: f.Sort, Dir: f.Order, Lim: limit, Off: offset})
+	rows, err := r.DB.Q(ctx).ListUsers(ctx, store.ListUsersParams{RoleID: f.RoleID, IsActive: f.IsActive, MitraID: f.MitraID, Deleted: f.Deleted, Search: f.Search, Sort: f.Sort, Dir: f.Order, Lim: limit, Off: offset})
 	if err != nil {
 		return nil, err
 	}
@@ -52,11 +54,11 @@ func (r Repository) List(ctx context.Context, f domain.Filter, limit, offset int
 }
 
 func (r Repository) Count(ctx context.Context, f domain.Filter) (int64, error) {
-	return r.DB.Q(ctx).CountUsers(ctx, store.CountUsersParams{RoleID: f.RoleID, IsActive: f.IsActive, Deleted: f.Deleted, Search: f.Search})
+	return r.DB.Q(ctx).CountUsers(ctx, store.CountUsersParams{RoleID: f.RoleID, IsActive: f.IsActive, MitraID: f.MitraID, Deleted: f.Deleted, Search: f.Search})
 }
 
 func (r Repository) Create(ctx context.Context, u domain.NewUser) error {
-	err := r.DB.Q(ctx).CreateUser(ctx, store.CreateUserParams{ID: u.ID, Email: u.Email, FullName: &u.FullName, RoleID: u.RoleID, PasswordHash: u.PasswordHash})
+	err := r.DB.Q(ctx).CreateUser(ctx, store.CreateUserParams{ID: u.ID, Email: u.Email, FullName: &u.FullName, RoleID: u.RoleID, PasswordHash: u.PasswordHash, MitraID: u.MitraID})
 	if postgres.IsUnique(err, "email") {
 		return domain.ErrEmailTaken
 	}
@@ -64,7 +66,7 @@ func (r Repository) Create(ctx context.Context, u domain.NewUser) error {
 }
 
 func (r Repository) Update(ctx context.Context, id string, c domain.Changes) error {
-	return r.DB.Q(ctx).UpdateUser(ctx, store.UpdateUserParams{ID: id, FullName: c.FullName, RoleID: c.RoleID, IsActive: c.IsActive})
+	return r.DB.Q(ctx).UpdateUser(ctx, store.UpdateUserParams{ID: id, FullName: c.FullName, RoleID: c.RoleID, IsActive: c.IsActive, SetMitra: c.MitraID != nil, MitraID: c.MitraID})
 }
 
 func (r Repository) SetDeleted(ctx context.Context, id string, at *time.Time) error {
@@ -79,8 +81,23 @@ func (r Repository) RevokeSessions(ctx context.Context, id string) error {
 	return r.DB.Q(ctx).RevokeUserFamilies(ctx, id)
 }
 
+func (r Repository) RevokeMitraSessions(ctx context.Context, mitraID string) error {
+	return r.DB.Q(ctx).RevokeMitraFamilies(ctx, &mitraID)
+}
+
 func (r Repository) RoleExists(ctx context.Context, id string) (bool, error) {
 	return r.DB.Q(ctx).RoleExists(ctx, id)
+}
+
+func (r Repository) RoleName(ctx context.Context, id string) (string, error) {
+	role, err := r.DB.Q(ctx).GetRole(ctx, id)
+	if err != nil {
+		if postgres.Err(err) == kernel.ErrNotFound {
+			return "", domain.ErrInvalidRole
+		}
+		return "", err
+	}
+	return role.Role.Name, nil
 }
 
 func (r Repository) RoleIDsByName(ctx context.Context) (map[string]string, error) {

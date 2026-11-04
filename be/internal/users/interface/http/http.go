@@ -50,6 +50,7 @@ type updateReq struct {
 	FullName *string `json:"fullName" validate:"omitempty,min=1,max=100"`
 	RoleID   *string `json:"roleId" validate:"omitempty,uuid"`
 	IsActive *bool   `json:"isActive"`
+	MitraID  *string `json:"mitraId" validate:"omitempty,uuid"`
 }
 
 type bulkReq struct {
@@ -84,20 +85,28 @@ func (h Handler) audit(c *fiber.Ctx, action, id string, after any) {
 	h.Audit.Record(c.UserContext(), action, "user", id, c.AllParams(), after)
 }
 
+// scope maps the guard's resolved scope to the users domain vocabulary.
+func scope(c *fiber.Ctx) domain.Scope {
+	s := rbac.CurrentScope(c)
+	return domain.Scope{Kind: s.Kind, UserID: s.UserID, MitraID: s.MitraID}
+}
+
 func (h Handler) Routes(g rbac.Guarded) {
-	g.Get("/users", "users.manage", func(c *fiber.Ctx) error {
+	// Reading the list is users.view so MITRA_STAFF can read without writing;
+	// every mutation stays users.manage.
+	g.Get("/users", "users.view", func(c *fiber.Ctx) error {
 		var q listQuery
 		if err := httpx.Query(c, &q); err != nil {
 			return err
 		}
-		rows, total, err := h.Svc.List(c.UserContext(), q.filter(), int32(q.Limit), q.Offset())
+		rows, total, err := h.Svc.List(c.UserContext(), scope(c), q.filter(), int32(q.Limit), q.Offset())
 		if err != nil {
 			return err
 		}
 		return httpx.Page(c, rows, httpx.NewPageMeta(total, q.Page, q.Limit))
 	})
 
-	g.Get("/users/export", "users.manage", func(c *fiber.Ctx) error {
+	g.Get("/users/export", "users.view", func(c *fiber.Ctx) error {
 		var q struct {
 			listQuery
 			Format string `query:"format" validate:"omitempty,oneof=csv xlsx"`
@@ -105,7 +114,7 @@ func (h Handler) Routes(g rbac.Guarded) {
 		if err := httpx.Query(c, &q); err != nil {
 			return err
 		}
-		rows, err := h.Svc.Export(c.UserContext(), q.filter())
+		rows, err := h.Svc.Export(c.UserContext(), scope(c), q.filter())
 		if err != nil {
 			return err
 		}
@@ -121,7 +130,7 @@ func (h Handler) Routes(g rbac.Guarded) {
 		return httpx.File(c, "users-"+stamp+".csv", "text/csv; charset=utf-8", xport.CSV(table))
 	})
 
-	g.Get("/users/import-template", "users.manage", func(c *fiber.Ctx) error {
+	g.Get("/users/import-template", "users.view", func(c *fiber.Ctx) error {
 		return httpx.File(c, "users-import-template.csv", "text/csv; charset=utf-8", xport.CSV([][]any{{"email", "fullName", "role"}, {"jane@example.com", "Jane Doe", "Admin"}}))
 	})
 
@@ -146,7 +155,7 @@ func (h Handler) Routes(g rbac.Guarded) {
 		if err != nil {
 			return err
 		}
-		created, errs, err := h.Svc.Import(c.UserContext(), table)
+		created, errs, err := h.Svc.Import(c.UserContext(), scope(c), table)
 		if err != nil {
 			return err
 		}
@@ -160,7 +169,7 @@ func (h Handler) Routes(g rbac.Guarded) {
 		if err := httpx.Body(c, &b); err != nil {
 			return err
 		}
-		ok, failed, err := h.Svc.Bulk(c.UserContext(), b.IDs, b.Action)
+		ok, failed, err := h.Svc.Bulk(c.UserContext(), scope(c), b.IDs, b.Action)
 		if err != nil {
 			return err
 		}
@@ -169,12 +178,12 @@ func (h Handler) Routes(g rbac.Guarded) {
 		return httpx.OK(c, res)
 	})
 
-	g.Get("/users/:id", "users.manage", func(c *fiber.Ctx) error {
+	g.Get("/users/:id", "users.view", func(c *fiber.Ctx) error {
 		id, err := httpx.ID(c, "id")
 		if err != nil {
 			return err
 		}
-		v, err := h.Svc.Get(c.UserContext(), id)
+		v, err := h.Svc.Get(c.UserContext(), scope(c), id)
 		if err != nil {
 			return err
 		}
@@ -186,7 +195,7 @@ func (h Handler) Routes(g rbac.Guarded) {
 		if err := httpx.Body(c, &b); err != nil {
 			return err
 		}
-		v, err := h.Svc.Create(c.UserContext(), b)
+		v, err := h.Svc.Create(c.UserContext(), scope(c), b)
 		if err != nil {
 			return err
 		}
@@ -203,7 +212,7 @@ func (h Handler) Routes(g rbac.Guarded) {
 		if err := httpx.Body(c, &b); err != nil {
 			return err
 		}
-		v, err := h.Svc.Update(c.UserContext(), id, domain.Changes{FullName: httpx.TrimPtr(b.FullName), RoleID: b.RoleID, IsActive: b.IsActive})
+		v, err := h.Svc.Update(c.UserContext(), scope(c), id, domain.Changes{FullName: httpx.TrimPtr(b.FullName), RoleID: b.RoleID, IsActive: b.IsActive, MitraID: b.MitraID})
 		if err != nil {
 			return err
 		}
@@ -216,7 +225,7 @@ func (h Handler) Routes(g rbac.Guarded) {
 		if err != nil {
 			return err
 		}
-		if err := h.Svc.Reinvite(c.UserContext(), id); err != nil {
+		if err := h.Svc.Reinvite(c.UserContext(), scope(c), id); err != nil {
 			return err
 		}
 		h.audit(c, "user.invite", id, nil)
@@ -234,7 +243,7 @@ func (h Handler) Routes(g rbac.Guarded) {
 		if err := httpx.Body(c, &b); err != nil {
 			return err
 		}
-		if err := h.Svc.ResetPassword(c.UserContext(), id, b.Password); err != nil {
+		if err := h.Svc.ResetPassword(c.UserContext(), scope(c), id, b.Password); err != nil {
 			return err
 		}
 		h.audit(c, "user.reset_password", id, nil)
@@ -246,7 +255,7 @@ func (h Handler) Routes(g rbac.Guarded) {
 		if err != nil {
 			return err
 		}
-		v, err := h.Svc.Remove(c.UserContext(), id)
+		v, err := h.Svc.Remove(c.UserContext(), scope(c), id)
 		if err != nil {
 			return err
 		}
@@ -259,7 +268,7 @@ func (h Handler) Routes(g rbac.Guarded) {
 		if err != nil {
 			return err
 		}
-		v, err := h.Svc.Restore(c.UserContext(), id)
+		v, err := h.Svc.Restore(c.UserContext(), scope(c), id)
 		if err != nil {
 			return err
 		}

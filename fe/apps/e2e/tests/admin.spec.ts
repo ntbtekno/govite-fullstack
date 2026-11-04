@@ -4,11 +4,18 @@ import { expect, test, type Page } from "@playwright/test"
 // (scripts/e2e.sh sets that up).
 const email = process.env.SUPER_ADMIN_EMAIL ?? "smoke@app.local"
 const password = process.env.SUPER_ADMIN_PASSWORD ?? "Smoke12345!"
+// The API runs with a pinned captcha code (E2E_CAPTCHA_CODE) so a headless
+// browser can sign in; production never sets it.
+const captcha = process.env.E2E_CAPTCHA_CODE ?? "ABCDE"
+const mitraKode = process.env.E2E_MITRA_KODE ?? "MTR-E2E"
+const mitraUsername = process.env.E2E_MITRA_USERNAME ?? "e2e-mitra"
+const mitraPassword = process.env.E2E_MITRA_PASSWORD ?? "E2eMitra123!"
 
 // Every page moved into features/ during the refactor, with its heading.
 const pages: [path: string, heading: string][] = [
   ["/admin/dashboard", "Dashboard"],
   ["/admin/administration/users", "Users"],
+  ["/admin/administration/mitra", "Mitra"],
   ["/admin/administration/roles", "Roles"],
   ["/admin/administration/permissions", "Permissions"],
   ["/admin/administration/announcements", "Announcements"],
@@ -45,8 +52,9 @@ function watch(page: Page) {
 
 async function signIn(page: Page) {
   await page.goto("/login")
-  await page.getByLabel("Email").fill(email)
+  await page.getByLabel("Username atau Email").fill(email)
   await page.getByLabel("Password").fill(password)
+  await page.getByRole("textbox", { name: "Captcha" }).fill(captcha)
   await page.getByRole("button", { name: "Sign in" }).click()
   await expect(page).toHaveURL(/\/admin\/dashboard/)
 }
@@ -101,6 +109,29 @@ test("create a user from the dialog", async ({ page }) => {
   await expect(
     page.getByRole("cell", { name: newEmail, exact: true })
   ).toBeVisible()
+
+  expect(problems).toEqual([])
+})
+
+// Proves the /login-mitra route signs a mitra user in and that the mitra-only
+// menus (Roles, Settings, Mitra) are hidden from them.
+test("sign in as mitra via /login-mitra", async ({ page }) => {
+  const problems = watch(page)
+  await page.goto("/login-mitra")
+  await page.getByLabel("Kode Mitra").fill(mitraKode)
+  await page.getByLabel("Username").fill(mitraUsername)
+  await page.getByLabel("Password").fill(mitraPassword)
+  await page.getByRole("textbox", { name: "Captcha" }).fill(captcha)
+  await page.getByRole("button", { name: "Sign in" }).click()
+  await expect(page).toHaveURL(/\/admin\/dashboard/)
+
+  // Users is visible (users.view); Superadmin-only pages are not.
+  await expect(
+    page.getByRole("link", { name: "Users" })
+  ).toBeVisible()
+  await expect(page.getByRole("link", { name: "Roles" })).toHaveCount(0)
+  await expect(page.getByRole("link", { name: "Settings" })).toHaveCount(0)
+  await expect(page.getByRole("link", { name: "Mitra" })).toHaveCount(0)
 
   expect(problems).toEqual([])
 })

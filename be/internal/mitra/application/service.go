@@ -54,7 +54,17 @@ func (s *Service) Update(ctx context.Context, id string, in UpdateInput) (domain
 		return domain.Mitra{}, err
 	}
 	c := domain.Changes{KodeMitra: in.KodeMitra, Nama: in.Nama, IsActive: in.IsActive}
-	if err := s.Repo.Update(ctx, id, c); err != nil {
+	deactivating := in.IsActive != nil && !*in.IsActive && before.IsActive
+	err = s.Tx.Do(ctx, func(ctx context.Context) error {
+		if err := s.Repo.Update(ctx, id, c); err != nil {
+			return err
+		}
+		if deactivating {
+			return s.Repo.RevokeSessions(ctx, id)
+		}
+		return nil
+	})
+	if err != nil {
 		return domain.Mitra{}, err
 	}
 	after, err := s.Repo.Get(ctx, id)
@@ -74,7 +84,17 @@ func (s *Service) SetActive(ctx context.Context, id string, in ActiveInput) (dom
 	if err != nil {
 		return domain.Mitra{}, err
 	}
-	if err := s.Repo.SetActive(ctx, id, in.IsActive); err != nil {
+	deactivating := !in.IsActive && before.IsActive
+	err = s.Tx.Do(ctx, func(ctx context.Context) error {
+		if err := s.Repo.SetActive(ctx, id, in.IsActive); err != nil {
+			return err
+		}
+		if deactivating {
+			return s.Repo.RevokeSessions(ctx, id)
+		}
+		return nil
+	})
+	if err != nil {
 		return domain.Mitra{}, err
 	}
 	after, err := s.Repo.Get(ctx, id)

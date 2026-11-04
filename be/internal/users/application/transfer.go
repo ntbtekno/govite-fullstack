@@ -19,7 +19,8 @@ const (
 	ImportLimit = 1000
 )
 
-func (s *Service) Export(ctx context.Context, f domain.Filter) ([]domain.User, error) {
+func (s *Service) Export(ctx context.Context, sc domain.Scope, f domain.Filter) ([]domain.User, error) {
+	applyScopeFilter(&f, sc)
 	return s.Repo.List(ctx, f, ExportLimit, 0)
 }
 
@@ -108,7 +109,7 @@ type ImportError struct {
 	Message string `json:"message"`
 }
 
-func (s *Service) Import(ctx context.Context, table [][]string) (created int, errs []ImportError, err error) {
+func (s *Service) Import(ctx context.Context, sc domain.Scope, table [][]string) (created int, errs []ImportError, err error) {
 	rows, err := s.ValidateImport(ctx, table)
 	if err != nil {
 		return 0, nil, err
@@ -119,7 +120,7 @@ func (s *Service) Import(ctx context.Context, table [][]string) (created int, er
 			errs = append(errs, ImportError{r.Row, strings.Join(r.Errors, "; ")})
 			continue
 		}
-		if _, err := s.Create(ctx, *r.Input); err != nil {
+		if _, err := s.Create(ctx, sc, *r.Input); err != nil {
 			return created, errs, err
 		}
 		created++

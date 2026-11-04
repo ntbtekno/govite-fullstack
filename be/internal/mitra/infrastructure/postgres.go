@@ -69,3 +69,7 @@ func (r Repository) Update(ctx context.Context, id string, c domain.Changes) err
 func (r Repository) SetActive(ctx context.Context, id string, active bool) error {
 	return r.DB.Q(ctx).SetMitraActive(ctx, store.SetMitraActiveParams{ID: id, IsActive: active})
 }
+
+func (r Repository) RevokeSessions(ctx context.Context, mitraID string) error {
+	return r.DB.Q(ctx).RevokeMitraFamilies(ctx, &mitraID)
+}

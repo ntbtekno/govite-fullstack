@@ -3,6 +3,7 @@ SELECT sqlc.embed(u), r.name AS role_name
 FROM "user" u JOIN role r ON r.id = u.role_id
 WHERE (sqlc.narg(role_id)::text IS NULL OR u.role_id = sqlc.narg(role_id))
   AND (sqlc.narg(is_active)::bool IS NULL OR u.is_active = sqlc.narg(is_active))
+  AND (sqlc.narg(mitra_id)::text IS NULL OR u.mitra_id = sqlc.narg(mitra_id))
   AND (CASE WHEN sqlc.arg(deleted)::bool THEN u.deleted_at IS NOT NULL ELSE u.deleted_at IS NULL END)
   AND (sqlc.narg(search)::text IS NULL
        OR u.email ILIKE '%' || sqlc.narg(search) || '%'
@@ -24,6 +25,7 @@ LIMIT sqlc.arg(lim) OFFSET sqlc.arg(off);
 SELECT count(*) FROM "user" u
 WHERE (sqlc.narg(role_id)::text IS NULL OR u.role_id = sqlc.narg(role_id))
   AND (sqlc.narg(is_active)::bool IS NULL OR u.is_active = sqlc.narg(is_active))
+  AND (sqlc.narg(mitra_id)::text IS NULL OR u.mitra_id = sqlc.narg(mitra_id))
   AND (CASE WHEN sqlc.arg(deleted)::bool THEN u.deleted_at IS NOT NULL ELSE u.deleted_at IS NULL END)
   AND (sqlc.narg(search)::text IS NULL
        OR u.email ILIKE '%' || sqlc.narg(search) || '%'
@@ -34,13 +36,14 @@ SELECT sqlc.embed(u), r.name AS role_name, m.kode_mitra
 FROM "user" u JOIN role r ON r.id = u.role_id LEFT JOIN mitra m ON m.id = u.mitra_id WHERE u.id = $1;
 
 -- name: CreateUser :exec
-INSERT INTO "user" (id, email, full_name, role_id, password_hash) VALUES ($1, $2, $3, $4, $5);
+INSERT INTO "user" (id, email, full_name, role_id, password_hash, mitra_id) VALUES ($1, $2, $3, $4, $5, sqlc.narg(mitra_id));
 
 -- name: UpdateUser :exec
 UPDATE "user" SET
   full_name = COALESCE(sqlc.narg(full_name), full_name),
   role_id = COALESCE(sqlc.narg(role_id), role_id),
-  is_active = COALESCE(sqlc.narg(is_active), is_active)
+  is_active = COALESCE(sqlc.narg(is_active), is_active),
+  mitra_id = CASE WHEN sqlc.arg(set_mitra)::bool THEN sqlc.narg(mitra_id) ELSE mitra_id END
 WHERE id = sqlc.arg(id);
 
 -- name: SetUserDeleted :exec

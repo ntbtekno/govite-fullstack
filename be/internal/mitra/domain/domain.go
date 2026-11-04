@@ -37,4 +37,7 @@ type Repository interface {
 	Create(ctx context.Context, id, kode, nama string, isActive bool) error
 	Update(ctx context.Context, id string, c Changes) error
 	SetActive(ctx context.Context, id string, active bool) error
+	// RevokeSessions revokes every refresh family of the mitra's users, so a
+	// deactivated mitra's tokens stop working immediately.
+	RevokeSessions(ctx context.Context, mitraID string) error
 }

@@ -24,7 +24,7 @@ func (g Guard) Require(resource, action string) fiber.Handler {
 		if p.ID == "" {
 			return httpx.ErrNotAuthenticated
 		}
-		scope, err := g.Service.Resolve(c.UserContext(), domain.Principal{ID: p.ID, RoleID: p.RoleID}, resource, action)
+		scope, err := g.Service.Resolve(c.UserContext(), domain.Principal{ID: p.ID, RoleID: p.RoleID, MitraID: p.MitraID}, resource, action)
 		if err != nil {
 			return err
 		}

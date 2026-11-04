@@ -69,6 +69,9 @@ type Deps struct {
 	// CaptchaImage overrides the renderer. Tests inject one that exposes the
 	// code so the challenge can be solved without OCR.
 	CaptchaImage authdomain.CaptchaImage
+	// CaptchaCode overrides the code generator. Only the non-production e2e
+	// hook sets it, so a headless browser can log in.
+	CaptchaCode func() (string, error)
 }
 
 // Settings reads the app settings without a full server, e.g. for the mail brand.
@@ -144,7 +147,7 @@ func wire(d Deps) (handlers, *sysapp.Service) {
 	auth := &authapp.Service{
 		Repo: authinfra.Repository{DB: db}, Crypto: authinfra.Crypto{Keys: keys}, OTP: authinfra.TOTP{},
 		Mail: authinfra.Mailer{Sender: d.Mail}, Tx: db, Audit: auditor, WebURL: d.Cfg.WebURL,
-		Captcha: &authapp.Captcha{Store: captchaStoreOr(d.CaptchaStore, d.Redis), Image: captchaImageOr(d.CaptchaImage), Crypto: authinfra.Crypto{Keys: keys}},
+		Captcha: &authapp.Captcha{Store: captchaStoreOr(d.CaptchaStore, d.Redis), Image: captchaImageOr(d.CaptchaImage), Crypto: authinfra.Crypto{Keys: keys}, Code: d.CaptchaCode},
 	}
 
 	var pusher notifydomain.Pusher

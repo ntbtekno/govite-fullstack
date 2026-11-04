@@ -20,8 +20,9 @@ type Scope struct {
 }
 
 type Principal struct {
-	ID     string
-	RoleID string
+	ID      string
+	RoleID  string
+	MitraID string
 }
 
 type GrantRepository interface {

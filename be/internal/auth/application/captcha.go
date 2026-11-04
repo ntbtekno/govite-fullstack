@@ -26,12 +26,20 @@ type Captcha struct {
 	Store  domain.CaptchaStore
 	Image  domain.CaptchaImage
 	Crypto domain.Crypto
+	// Code overrides the random generator. Nil uses the secure default; tests
+	// and the non-production e2e hook set it to a fixed code so a headless
+	// browser can log in.
+	Code func() (string, error)
 }
 
 // Issue returns a captcha id, its PNG data URL and the TTL in seconds.
 // The plaintext code is never returned or logged.
 func (c *Captcha) Issue(ctx context.Context) (domain.Captcha, error) {
-	code, err := randomCode(captchaLength)
+	gen := c.Code
+	if gen == nil {
+		gen = func() (string, error) { return randomCode(captchaLength) }
+	}
+	code, err := gen()
 	if err != nil {
 		return domain.Captcha{}, err
 	}

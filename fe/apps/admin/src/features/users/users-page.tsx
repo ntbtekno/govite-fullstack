@@ -42,6 +42,7 @@ import { useDebounced } from "@/lib/use-debounced"
 import { ConfirmAction } from "@/components/confirm-action"
 import { PageHeader } from "@/components/page"
 import { RequirePermission } from "@/features/auth/require-permission"
+import { useAuth } from "@/lib/auth-context"
 import { rolesApi } from "@/features/roles/api"
 import { usersApi, type UserListParams } from "@/features/users/api"
 import { UserImportDialog } from "@/features/users/user-import-dialog"
@@ -52,6 +53,9 @@ type UserSort = NonNullable<UserListParams["sort"]>
 type BulkAction = "activate" | "deactivate" | "delete" | "restore"
 
 export function UsersPage() {
+  const { can, user } = useAuth()
+  const canManage = can("users", "manage")
+  const isSuperadmin = !user?.mitraId
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState("")
   const [roleId, setRoleId] = useState(ANY)
@@ -88,6 +92,7 @@ export function UsersPage() {
   const roles = useQuery({
     queryKey: ["roles", "options"],
     queryFn: () => rolesApi.list({ page: 1, limit: 100 }),
+    enabled: can("roles", "manage"),
   })
 
   const exportUsers = useMutation({
@@ -136,12 +141,13 @@ export function UsersPage() {
   const rowIds = users.data?.data.map((u) => u.id) ?? []
 
   return (
-    <RequirePermission resource="users" action="manage">
+    <RequirePermission resource="users" action="view">
       <PageHeader
         title="Users"
         description="Accounts and their assigned role."
         actions={
-          <div className="flex flex-wrap gap-2">
+          canManage ? (
+            <div className="flex flex-wrap gap-2">
             <Button
               variant="outline"
               onClick={() => exportUsers.mutate("csv")}
@@ -219,6 +225,7 @@ export function UsersPage() {
               </DialogContent>
             </Dialog>
           </div>
+          ) : null
         }
       />
 
@@ -278,7 +285,7 @@ export function UsersPage() {
         </Button>
       </div>
 
-      {selected.size > 0 && (
+      {canManage && selected.size > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-sm">
           <span className="font-medium">{selected.size} selected</span>
           {deleted ? (
@@ -339,21 +346,24 @@ export function UsersPage() {
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="w-10">
-              <Checkbox
-                aria-label="Select all on this page"
-                checked={
-                  rowIds.length > 0 && rowIds.every((id) => selected.has(id))
-                    ? true
-                    : rowIds.some((id) => selected.has(id))
-                      ? "indeterminate"
-                      : false
-                }
-                onCheckedChange={(checked) =>
-                  setSelected(checked === true ? new Set(rowIds) : new Set())
-                }
-              />
-            </TableHead>
+            {canManage && (
+              <TableHead className="w-10">
+                <Checkbox
+                  aria-label="Select all on this page"
+                  checked={
+                    rowIds.length > 0 &&
+                    rowIds.every((id) => selected.has(id))
+                      ? true
+                      : rowIds.some((id) => selected.has(id))
+                        ? "indeterminate"
+                        : false
+                  }
+                  onCheckedChange={(checked) =>
+                    setSelected(checked === true ? new Set(rowIds) : new Set())
+                  }
+                />
+              </TableHead>
+            )}
             <SortableHead
               field="fullName"
               label="Name"
@@ -373,6 +383,7 @@ export function UsersPage() {
               }}
             />
             <TableHead>Role</TableHead>
+            {isSuperadmin && <TableHead>Mitra</TableHead>}
             <TableHead>Status</TableHead>
             <SortableHead
               field="lastLoginAt"
@@ -388,7 +399,7 @@ export function UsersPage() {
         </TableHeader>
         <TableBody>
           <TableState
-            colSpan={7}
+            colSpan={canManage ? (isSuperadmin ? 8 : 7) : isSuperadmin ? 7 : 6}
             loading={users.isPending}
             empty={users.data?.data.length === 0}
             error={users.error}
@@ -399,23 +410,28 @@ export function UsersPage() {
               key={user.id}
               data-state={selected.has(user.id) ? "selected" : undefined}
             >
-              <TableCell>
-                <Checkbox
-                  aria-label={`Select ${user.email}`}
-                  checked={selected.has(user.id)}
-                  onCheckedChange={(checked) =>
-                    setSelected((prev) => {
-                      const next = new Set(prev)
-                      if (checked === true) next.add(user.id)
-                      else next.delete(user.id)
-                      return next
-                    })
-                  }
-                />
-              </TableCell>
+              {canManage && (
+                <TableCell>
+                  <Checkbox
+                    aria-label={`Select ${user.email}`}
+                    checked={selected.has(user.id)}
+                    onCheckedChange={(checked) =>
+                      setSelected((prev) => {
+                        const next = new Set(prev)
+                        if (checked === true) next.add(user.id)
+                        else next.delete(user.id)
+                        return next
+                      })
+                    }
+                  />
+                </TableCell>
+              )}
               <TableCell>{user.fullName ?? "—"}</TableCell>
               <TableCell>{user.email}</TableCell>
               <TableCell>{user.roleName}</TableCell>
+              {isSuperadmin && (
+                <TableCell>{user.mitraKode ?? "—"}</TableCell>
+              )}
               <TableCell>
                 <Badge
                   variant={

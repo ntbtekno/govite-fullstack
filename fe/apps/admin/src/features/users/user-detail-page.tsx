@@ -31,6 +31,7 @@ import { useAuth } from "@/lib/auth-context"
 export function UserDetailPage() {
   const { userId } = useParams({ from: "/admin/administration/users_/$userId" })
   const { can } = useAuth()
+  const canManage = can("users", "manage")
   const queryClient = useQueryClient()
   const user = useQuery({
     queryKey: ["users", userId],
@@ -39,6 +40,7 @@ export function UserDetailPage() {
   const roles = useQuery({
     queryKey: ["roles", "options"],
     queryFn: () => rolesApi.list({ page: 1, limit: 100 }),
+    enabled: can("roles", "manage"),
   })
   const invalidate = async () => {
     await Promise.all([
@@ -97,7 +99,7 @@ export function UserDetailPage() {
   }
 
   return (
-    <RequirePermission resource="users" action="manage">
+    <RequirePermission resource="users" action="view">
       {user.isPending && (
         <p className="text-sm text-muted-foreground">Loading…</p>
       )}
@@ -139,6 +141,7 @@ export function UserDetailPage() {
                       id="fullName"
                       name="fullName"
                       defaultValue={user.data.fullName ?? ""}
+                      disabled={!canManage}
                       required
                     />
                   </div>
@@ -147,6 +150,7 @@ export function UserDetailPage() {
                     <Select
                       name="roleId"
                       defaultValue={user.data.roleId}
+                      disabled={!canManage}
                       required
                     >
                       <SelectTrigger id="roleId">
@@ -161,40 +165,44 @@ export function UserDetailPage() {
                       </SelectContent>
                     </Select>
                   </div>
-                  <Button type="submit" disabled={update.isPending}>
-                    Save profile
-                  </Button>
+                  {canManage && (
+                    <Button type="submit" disabled={update.isPending}>
+                      Save profile
+                    </Button>
+                  )}
                 </form>
               </DetailSection>
 
-              <DangerZone>
-                {user.data.deletedAt ? (
-                  <Button onClick={() => restore.mutate()}>Restore user</Button>
-                ) : user.data.isActive ? (
-                  <ConfirmAction
-                    title={`Deactivate ${user.data.email}?`}
-                    description="User will be signed out and unable to log in."
-                    confirmLabel="Deactivate"
-                    onConfirm={() => update.mutate({ isActive: false })}
-                    trigger={
-                      <Button variant="destructive">Deactivate user</Button>
-                    }
-                  />
-                ) : (
-                  <Button onClick={() => update.mutate({ isActive: true })}>
-                    Activate user
-                  </Button>
-                )}
-                {!user.data.deletedAt && (
-                  <ConfirmAction
-                    title={`Delete ${user.data.email}?`}
-                    description="User will be hidden from active lists and signed out."
-                    confirmLabel="Delete"
-                    onConfirm={() => remove.mutate()}
-                    trigger={<Button variant="destructive">Delete user</Button>}
-                  />
-                )}
-              </DangerZone>
+              {canManage && (
+                <DangerZone>
+                  {user.data.deletedAt ? (
+                    <Button onClick={() => restore.mutate()}>Restore user</Button>
+                  ) : user.data.isActive ? (
+                    <ConfirmAction
+                      title={`Deactivate ${user.data.email}?`}
+                      description="User will be signed out and unable to log in."
+                      confirmLabel="Deactivate"
+                      onConfirm={() => update.mutate({ isActive: false })}
+                      trigger={
+                        <Button variant="destructive">Deactivate user</Button>
+                      }
+                    />
+                  ) : (
+                    <Button onClick={() => update.mutate({ isActive: true })}>
+                      Activate user
+                    </Button>
+                  )}
+                  {!user.data.deletedAt && (
+                    <ConfirmAction
+                      title={`Delete ${user.data.email}?`}
+                      description="User will be hidden from active lists and signed out."
+                      confirmLabel="Delete"
+                      onConfirm={() => remove.mutate()}
+                      trigger={<Button variant="destructive">Delete user</Button>}
+                    />
+                  )}
+                </DangerZone>
+              )}
             </div>
 
             <div className="grid gap-4">
@@ -211,7 +219,7 @@ export function UserDetailPage() {
                       user.data.emailVerifiedAt ? "Verified" : "Unverified"
                     }
                   />
-                  {user.data.invited && (
+                  {user.data.invited && canManage && (
                     <DetailField
                       label="Invite"
                       value={
@@ -241,31 +249,33 @@ export function UserDetailPage() {
                 </div>
               </DetailSection>
 
-              <DetailSection
-                title="Security"
-                description="Reset password and revoke active sessions."
-              >
-                <form onSubmit={onResetPassword} className="grid gap-3">
-                  <div className="grid gap-2">
-                    <Label htmlFor="password">New password</Label>
-                    <Input
-                      id="password"
-                      name="password"
-                      type="password"
-                      minLength={SECURITY_POLICY.passwordMinLength}
-                      maxLength={SECURITY_POLICY.passwordMaxLength}
-                      required
-                    />
-                  </div>
-                  <Button
-                    type="submit"
-                    variant="outline"
-                    disabled={resetPassword.isPending}
-                  >
-                    Reset password
-                  </Button>
-                </form>
-              </DetailSection>
+              {canManage && (
+                <DetailSection
+                  title="Security"
+                  description="Reset password and revoke active sessions."
+                >
+                  <form onSubmit={onResetPassword} className="grid gap-3">
+                    <div className="grid gap-2">
+                      <Label htmlFor="password">New password</Label>
+                      <Input
+                        id="password"
+                        name="password"
+                        type="password"
+                        minLength={SECURITY_POLICY.passwordMinLength}
+                        maxLength={SECURITY_POLICY.passwordMaxLength}
+                        required
+                      />
+                    </div>
+                    <Button
+                      type="submit"
+                      variant="outline"
+                      disabled={resetPassword.isPending}
+                    >
+                      Reset password
+                    </Button>
+                  </form>
+                </DetailSection>
+              )}
 
               {can("audit", "view") && <UserActivity userId={userId} />}
             </div>

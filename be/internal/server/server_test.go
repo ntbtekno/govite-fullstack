@@ -104,6 +104,32 @@ func (e *env) seedUser(email string, perms ...policy.Permission) (userID, roleID
 	return userID, roleID
 }
 
+// seedMitra creates a mitra row and returns its id.
+func (e *env) seedMitra(kode, nama string) string {
+	e.t.Helper()
+	id := kernel.NewID()
+	must(e.t, e.q.CreateMitra(context.Background(), store.CreateMitraParams{ID: id, KodeMitra: kode, Nama: nama, IsActive: true}))
+	return id
+}
+
+// seedMitraUser creates a role whose grants carry the given scope, a user bound
+// to mitraID, and a unique username so the user can log in via /login-mitra.
+func (e *env) seedMitraUser(email, username, mitraID string, scope string, perms ...policy.Permission) (userID, roleID string) {
+	e.t.Helper()
+	ctx := context.Background()
+	roleID, userID = kernel.NewID(), kernel.NewID()
+	must(e.t, e.q.CreateRole(ctx, store.CreateRoleParams{ID: roleID, Name: "role-" + email}))
+	for _, p := range perms {
+		must(e.t, e.q.InsertRolePermission(ctx, store.InsertRolePermissionParams{ID: kernel.NewID(), RoleID: roleID, Resource: p.Resource, Action: p.Action, Scope: scope}))
+	}
+	hash, _ := crypto.HashPassword(password)
+	name := "Test"
+	must(e.t, e.q.CreateUser(ctx, store.CreateUserParams{ID: userID, Email: email, FullName: &name, RoleID: roleID, PasswordHash: &hash, MitraID: &mitraID}))
+	_, err := e.pool.Exec(ctx, `UPDATE "user" SET username = $2 WHERE id = $1`, userID, username)
+	must(e.t, err)
+	return userID, roleID
+}
+
 type res struct {
 	Code    int
 	Body    map[string]any
@@ -317,6 +343,119 @@ func TestRBAC(t *testing.T) {
 	// self-service works without permission
 	expect(t, e.do("GET", "/auth/me", nil, bearer(none)), 200)
 	expect(t, e.do("GET", "/account/sessions", nil, bearer(none)), 200)
+}
+
+// TestMitraUserIsolation proves the Milestone 4 DoD: a Mitra A admin sees only
+// Mitra A users, cannot read another mitra's user (404), cannot create into
+// another mitra even with an injected mitra_id, and cannot appoint a Super
+// Admin.
+func TestMitraUserIsolation(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+
+	mitraA := e.seedMitra("MTR-A", "Mitra A")
+	mitraB := e.seedMitra("MTR-B", "Mitra B")
+
+	// The mitra admin role, named MITRA_ADMIN so it is assignable by a mitra.
+	adminRole := kernel.NewID()
+	must(t, e.q.CreateRole(ctx, store.CreateRoleParams{ID: adminRole, Name: "MITRA_ADMIN"}))
+	mitraPerms := []policy.Permission{{Resource: "users", Action: "manage"}, {Resource: "users", Action: "view"}}
+	for _, p := range mitraPerms {
+		must(t, e.q.InsertRolePermission(ctx, store.InsertRolePermissionParams{ID: kernel.NewID(), RoleID: adminRole, Resource: p.Resource, Action: p.Action, Scope: "mitra"}))
+	}
+	// A Super Admin role a mitra must never assign.
+	superRole := kernel.NewID()
+	must(t, e.q.CreateRole(ctx, store.CreateRoleParams{ID: superRole, Name: "Super Admin"}))
+	must(t, e.q.InsertRolePermission(ctx, store.InsertRolePermissionParams{ID: kernel.NewID(), RoleID: superRole, Resource: "users", Action: "manage", Scope: "all"}))
+
+	// Mitra A admin (scope mitra via role grant).
+	adminAID := kernel.NewID()
+	hash, _ := crypto.HashPassword(password)
+	nameA := "Admin A"
+	must(t, e.q.CreateUser(ctx, store.CreateUserParams{ID: adminAID, Email: "admin-a@test.local", FullName: &nameA, RoleID: adminRole, PasswordHash: &hash, MitraID: &mitraA}))
+	_, err := e.pool.Exec(ctx, `UPDATE "user" SET username = 'admin-a' WHERE id = $1`, adminAID)
+	must(t, err)
+
+	// A second user in Mitra A, and a user in Mitra B.
+	userA2, _ := e.seedMitraUser("a2@test.local", "a2", mitraA, "mitra", mitraPerms...)
+	userB, _ := e.seedMitraUser("b1@test.local", "b1", mitraB, "mitra", mitraPerms...)
+
+	tokA, _ := e.loginMitra("MTR-A", "admin-a")
+
+	// 1. GET /users only returns Mitra A users (admin + a2).
+	r := e.do("GET", "/users", nil, bearer(tokA))
+	expect(t, r, 200)
+	rows := r.Body["data"].([]any)
+	if len(rows) != 2 {
+		t.Fatalf("Mitra A should see 2 users, got %d: %s", len(rows), r.Raw)
+	}
+	for _, row := range rows {
+		m := row.(map[string]any)
+		if m["mitraId"] != mitraA {
+			t.Fatalf("leaked user from another mitra: %v", m)
+		}
+	}
+
+	// 2. GET /users/<mitra B user> is a 404, not a leak.
+	expect(t, e.do("GET", "/users/"+userB, nil, bearer(tokA)), 404, "USER_NOT_FOUND")
+
+	// 3. POST /users with Mitra B's id injected still creates into Mitra A.
+	r = e.do("POST", "/users", map[string]any{"email": "sneaky@test.local", "fullName": "Sneaky", "roleId": adminRole, "mitraId": mitraB}, bearer(tokA))
+	expect(t, r, 201)
+	if r.data()["mitraId"] != mitraA {
+		t.Fatalf("body mitraId was honoured: %s", r.Raw)
+	}
+
+	// 4. A mitra cannot appoint a Super Admin.
+	expect(t, e.do("PATCH", "/users/"+userA2, map[string]any{"roleId": superRole}, bearer(tokA)), 403, "ROLE_NOT_ALLOWED")
+	expect(t, e.do("POST", "/users", map[string]any{"email": "x@test.local", "fullName": "X", "roleId": superRole}, bearer(tokA)), 403, "ROLE_NOT_ALLOWED")
+
+	// 5. A mitra cannot move a user into another mitra via PATCH.
+	expect(t, e.do("PATCH", "/users/"+userA2, map[string]any{"mitraId": mitraB}, bearer(tokA)), 200)
+	after := e.do("GET", "/users/"+userA2, nil, bearer(tokA))
+	expect(t, after, 200)
+	if after.data()["mitraId"] != mitraA {
+		t.Fatalf("mitra_id was changed by a mitra caller: %s", after.Raw)
+	}
+
+	// A Superadmin still sees every mitra.
+	superAdminID, _ := e.seedUser("root@test.local", all...)
+	superTok, _ := e.login("root@test.local")
+	r = e.do("GET", "/users", nil, bearer(superTok))
+	expect(t, r, 200)
+	if n := len(r.Body["data"].([]any)); n < 4 {
+		t.Fatalf("superadmin should see all users, got %d", n)
+	}
+	_ = superAdminID
+}
+
+// TestMitraDeactivationRevokesSessions proves that switching a mitra off signs
+// its users out: their refresh token stops working immediately.
+func TestMitraDeactivationRevokesSessions(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	mitraID := e.seedMitra("MTR-OFF", "Mitra Off")
+
+	// Superadmin to call the mitra endpoint.
+	e.seedUser("root@test.local", all...)
+	superTok, _ := e.login("root@test.local")
+
+	// A mitra user with an active session.
+	e.seedMitraUser("m1@test.local", "m1", mitraID, "mitra", policy.Permission{Resource: "users", Action: "view"})
+	_, refresh := e.loginMitra("MTR-OFF", "m1")
+	if refresh == nil {
+		t.Fatal("no refresh cookie")
+	}
+
+	// Deactivate the mitra, then the stored refresh token is revoked.
+	expect(t, e.do("PATCH", "/mitra/"+mitraID+"/active", map[string]any{"isActive": false}, bearer(superTok)), 200)
+	expect(t, e.do("POST", "/auth/refresh", nil, cookie(refresh)), 401, "INVALID_REFRESH_TOKEN")
+
+	// And the mitra can no longer log in at all (generic failure).
+	id, answer := e.solveCaptcha()
+	r := e.do("POST", "/auth/login-mitra", map[string]string{"mitraKode": "MTR-OFF", "username": "m1", "password": password, "captchaId": id, "captcha": answer})
+	expect(t, r, 401)
+	_ = ctx
 }
 
 func TestRefreshRotationAndReuse(t *testing.T) {

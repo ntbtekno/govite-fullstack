@@ -449,6 +449,38 @@ Jangan melompati urutan.
   membuat user Mitra B meski body-nya diutak-atik; Mitra Admin
   tidak bisa mengubah role user menjadi Super Admin.
 
+**Status 3 Nov 2026 — SELESAI (backend + frontend).**
+
+- RBAC: `Guard.Resolve` kini menerima `MitraID` principal;
+  grant `all`/`team` DITURUNKAN menjadi scope `mitra` untuk
+  caller bermitra (defense in depth 2.3).
+- Users: `List/Count/Get/Create/Update/Bulk/Export/Import`
+  difilter oleh scope (mitra_id). `GET /users` dijaga
+  `users.view`, mutasi tetap `users.manage`. Target lintas
+  mitra = 404. `POST/PATCH /users` dari mitra memaksa
+  `mitra_id = caller` (body diabaikan). Role di luar
+  MITRA_ADMIN/MITRA_STAFF ditolak `ROLE_NOT_ALLOWED`.
+- Mitra dinonaktifkan (`PATCH /mitra/:id/active` atau
+  `is_active=false`) mencabut semua refresh family user
+  mitra itu dalam satu transaksi.
+- Frontend: form Superadmin mengirim field `login` (utang M2
+  ditutup), route `/login-mitra` (variant mitra), menu
+  berdasarkan permission `/auth/me`, halaman
+  `/admin/administration/mitra` (list/create/edit/nonaktifkan)
+  untuk Superadmin, kolom Mitra di halaman user (Superadmin),
+  halaman user read-only untuk MITRA_STAFF (`users.view`).
+- Bukti: `TestMitraUserIsolation`, `TestMitraDeactivationRevokesSessions`
+  (backend e2e) lolos; `be make lint test` + `make test-e2e`
+  (race) lolos; `fe pnpm lint && typecheck && test && build`
+  lolos. Browser e2e `scripts/e2e.sh` (Playwright) 3/3 lolos:
+  login Superadmin lewat `/login` berhasil, login mitra lewat
+  `/login-mitra` berhasil, setiap halaman render, menu
+  Superadmin tersembunyi untuk mitra.
+- Catatan: e2e browser memakai hook non-produksi
+  `E2E_CAPTCHA_CODE` (kode captcha tetap) dan seed mitra
+  `E2E_MITRA_*`; keduanya ditolak/diabaikan di produksi, agar
+  captcha tidak dilonggarkan di runtime normal.
+
 ### Milestone 5 — Audit, hardening, dan dokumentasi
 
 - Audit login (sukses/gagal, termasuk gagal captcha — tanpa

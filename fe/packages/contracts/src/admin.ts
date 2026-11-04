@@ -62,6 +62,8 @@ export const CreateUserRequestSchema = z.object({
   fullName: z.string().trim().min(1).max(100),
   roleId: z.uuid(),
   password: password.optional(),
+  // Superadmin only; ignored for a mitra caller (forced to its own mitra).
+  mitraId: z.uuid().nullable().optional(),
 })
 export type CreateUserRequest = z.infer<typeof CreateUserRequestSchema>
 
@@ -69,6 +71,7 @@ export const UpdateUserRequestSchema = z.object({
   fullName: z.string().trim().min(1).max(100).optional(),
   roleId: z.uuid().optional(),
   isActive: z.boolean().optional(),
+  mitraId: z.uuid().nullable().optional(),
 })
 export type UpdateUserRequest = z.infer<typeof UpdateUserRequestSchema>
 
@@ -101,6 +104,8 @@ export interface UserResponse {
   avatarUrl: string | null
   roleId: string
   roleName: string
+  mitraId: string | null
+  mitraKode: string | null
   isActive: boolean
   invited: boolean
   emailVerifiedAt: string | null
@@ -166,6 +171,10 @@ export const MeResponseSchema = z.object({
   avatarUrl: z.string().nullable(),
   roleId: z.uuid(),
   roleName: z.string(),
+  // Filled only for mitra users; null for a Superadmin.
+  mitraId: z.uuid().nullable().optional(),
+  mitraKode: z.string().nullable().optional(),
+  username: z.string().nullable().optional(),
   emailVerified: z.boolean(),
   permissions: z.array(RolePermissionResponseSchema),
 })
@@ -319,3 +328,26 @@ export const NotificationPreferencesSchema = z.object({
 export type NotificationPreferences = z.infer<
   typeof NotificationPreferencesSchema
 >
+
+export const MitraListQuerySchema = PaginationQuerySchema
+export type MitraListQuery = z.infer<typeof MitraListQuerySchema>
+
+export const CreateMitraRequestSchema = z.object({
+  kodeMitra: z.string().trim().min(1).max(50),
+  nama: z.string().trim().min(1).max(200),
+})
+export type CreateMitraRequest = z.infer<typeof CreateMitraRequestSchema>
+
+export const UpdateMitraRequestSchema = z.object({
+  kodeMitra: z.string().trim().min(1).max(50).optional(),
+  nama: z.string().trim().min(1).max(200).optional(),
+})
+export type UpdateMitraRequest = z.infer<typeof UpdateMitraRequestSchema>
+
+export interface MitraResponse {
+  id: string
+  kodeMitra: string
+  nama: string
+  isActive: boolean
+  createdAt: string
+}

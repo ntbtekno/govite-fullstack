@@ -129,6 +129,13 @@ func serve(ctx context.Context, cfg config.Config, pool *pgxpool.Pool) error {
 		d.Push = push
 	}
 
+	// Non-production e2e hook: a fixed captcha code lets a headless browser
+	// sign in. Refused in production so no backdoor ships.
+	if code := cfg.E2ECaptchaCode; code != "" && !cfg.Production() {
+		slog.Warn("e2e captcha code override is active; never use outside tests")
+		d.CaptchaCode = func() (string, error) { return code, nil }
+	}
+
 	f, sys := server.New(d)
 	daily := make(chan struct{})
 	go func() { sys.RunDaily(ctx); close(daily) }()
@@ -206,7 +213,42 @@ func seed(ctx context.Context, cfg config.Config, q *store.Queries) error {
 	if err := q.UpsertSuperAdmin(ctx, store.UpsertSuperAdminParams{ID: kernel.NewID(), Email: cfg.SuperAdminEmail, RoleID: SuperAdminRoleID, PasswordHash: &hash, Username: kernel.Ptr(cfg.SuperAdminUsername)}); err != nil {
 		return err
 	}
+	if err := seedE2EMitra(ctx, cfg, q); err != nil {
+		return err
+	}
 	slog.Info("seed done", "permissions", len(keys), "superAdmin", cfg.SuperAdminEmail)
+	return nil
+}
+
+// seedE2EMitra seeds a throwaway mitra and its admin for the browser e2e. It
+// runs only outside production and only when all three E2E_MITRA_* vars are set.
+func seedE2EMitra(ctx context.Context, cfg config.Config, q *store.Queries) error {
+	if cfg.Production() || cfg.E2EMitraKode == "" || cfg.E2EMitraUsername == "" || cfg.E2EMitraPassword == "" {
+		return nil
+	}
+	mitra, err := q.GetMitraByKode(ctx, cfg.E2EMitraKode)
+	if err != nil {
+		mitra = store.Mitra{ID: kernel.NewID(), KodeMitra: cfg.E2EMitraKode, Nama: "Mitra E2E", IsActive: true}
+		if err := q.CreateMitra(ctx, store.CreateMitraParams{ID: mitra.ID, KodeMitra: mitra.KodeMitra, Nama: mitra.Nama, IsActive: true}); err != nil {
+			return err
+		}
+	}
+	hash, err := crypto.HashPassword(cfg.E2EMitraPassword)
+	if err != nil {
+		return err
+	}
+	email := cfg.E2EMitraUsername + "@mitra.local"
+	if err := q.UpsertSuperAdmin(ctx, store.UpsertSuperAdminParams{ID: kernel.NewID(), Email: email, RoleID: MitraAdminRoleID, PasswordHash: &hash, Username: &cfg.E2EMitraUsername}); err != nil {
+		return err
+	}
+	u, err := q.GetUserByUsername(ctx, &cfg.E2EMitraUsername)
+	if err != nil {
+		return err
+	}
+	if err := q.UpdateUser(ctx, store.UpdateUserParams{ID: u.ID, SetMitra: true, MitraID: &mitra.ID}); err != nil {
+		return err
+	}
+	slog.Info("e2e mitra seeded", "kode", cfg.E2EMitraKode, "username", cfg.E2EMitraUsername)
 	return nil
 }
 
