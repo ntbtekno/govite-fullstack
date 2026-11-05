@@ -79,12 +79,13 @@ test("sign in, session survives reload, every page renders, sign out", async ({
     await expect(page.getByText("Access denied")).toHaveCount(0)
   }
 
-  // The sidebar user button shows the role under the name.
+  // The sidebar user button shows the role under the name. A Superadmin
+  // session ends at the internal login, never the mitra one.
   await page.getByRole("button", { name: /Super Admin/ }).click()
   await page.getByRole("menuitem", { name: "Log out" }).click()
-  await expect(page).toHaveURL(/\/login/)
+  await expect(page).toHaveURL(/\/login$/)
   await page.goto("/admin/dashboard")
-  await expect(page).toHaveURL(/\/login/)
+  await expect(page).toHaveURL(/\/login(\?|$)/)
 
   expect(problems).toEqual([])
 })
@@ -199,6 +200,29 @@ test("sign in as mitra via /login-mitra", async ({ page }) => {
   await expect(page.getByRole("link", { name: "Roles" })).toHaveCount(0)
   await expect(page.getByRole("link", { name: "Settings" })).toHaveCount(0)
   await expect(page.getByRole("link", { name: "Mitra" })).toHaveCount(0)
+
+  expect(problems).toEqual([])
+})
+
+// A mitra session must end at the mitra login, not the internal one. The
+// destination is read from the pre-logout auth state (the user's mitraId).
+test("mitra logout returns to /login-mitra", async ({ page }) => {
+  const problems = watch(page)
+  await page.goto("/login-mitra")
+  await page.getByLabel("Kode Mitra").fill(mitraKode)
+  await page.getByLabel("Username atau Email").fill(mitraUsername)
+  await page.getByLabel("Password").fill(mitraPassword)
+  await page.getByRole("textbox", { name: "Captcha" }).fill(captcha)
+  await page.getByRole("button", { name: "Sign in" }).click()
+  await expect(page).toHaveURL(/\/admin\/dashboard/)
+
+  // The seeded e2e mitra user is created by cmd/api's seedE2EMitra via
+  // UpsertSuperAdmin, which stores full_name = "Super Admin" (roles.sql). So
+  // NavUser renders that same label here, exactly like the Superadmin session
+  // - the button name comes from the seed fixture, not a guess.
+  await page.getByRole("button", { name: /Super Admin/ }).click()
+  await page.getByRole("menuitem", { name: "Log out" }).click()
+  await expect(page).toHaveURL(/\/login-mitra$/)
 
   expect(problems).toEqual([])
 })

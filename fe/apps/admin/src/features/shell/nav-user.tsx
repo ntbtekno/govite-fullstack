@@ -76,8 +76,12 @@ export function NavUser() {
             <DropdownMenuSeparator />
             <DropdownMenuItem
               onSelect={async () => {
+                // Read the mitra identity before logout clears the auth state:
+                // a mitra session returns to its own login, a Superadmin to the
+                // internal one.
+                const wasMitra = !!user.mitraId
                 await logout()
-                await navigate({ to: "/login" })
+                await navigate({ to: wasMitra ? "/login-mitra" : "/login" })
               }}
             >
               <LogOutIcon />
