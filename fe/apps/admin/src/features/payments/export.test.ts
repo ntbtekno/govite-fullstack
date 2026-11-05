@@ -1,11 +1,50 @@
 import { describe, expect, it } from "vitest"
 import {
   fetchAllPaymentRows,
+  formatTransactionAt,
   getPaymentExportFilename,
   getDefaultPaymentDateRange,
   MAX_EXPORT_ROWS,
 } from "./export"
 import type { PaymentReportItem, ReportsListResponse } from "@/lib/reports-api"
+
+describe("Payment formatting - formatTransactionAt", () => {
+  it("normalizes ISO string with T and UTC Z to exact YYYY-MM-DD HH:mm:ss without timezone shift", () => {
+    expect(formatTransactionAt("2025-06-04T16:39:32.000Z")).toBe(
+      "2025-06-04 16:39:32"
+    )
+  })
+
+  it("normalizes ISO string with T and fractional seconds", () => {
+    expect(formatTransactionAt("2025-06-04T16:39:32.123456")).toBe(
+      "2025-06-04 16:39:32"
+    )
+  })
+
+  it("normalizes ISO string with T without timezone or fraction", () => {
+    expect(formatTransactionAt("2025-06-04T16:39:32")).toBe(
+      "2025-06-04 16:39:32"
+    )
+  })
+
+  it("keeps already formatted YYYY-MM-DD HH:mm:ss as is", () => {
+    expect(formatTransactionAt("2025-06-04 16:39:32")).toBe(
+      "2025-06-04 16:39:32"
+    )
+  })
+
+  it("handles string with timezone offset by stripping offset", () => {
+    expect(formatTransactionAt("2025-06-04T16:39:32+07:00")).toBe(
+      "2025-06-04 16:39:32"
+    )
+  })
+
+  it("handles empty or null values gracefully", () => {
+    expect(formatTransactionAt("")).toBe("-")
+    expect(formatTransactionAt(null)).toBe("-")
+    expect(formatTransactionAt(undefined)).toBe("-")
+  })
+})
 
 function makeItem(idx: number): PaymentReportItem {
   return {

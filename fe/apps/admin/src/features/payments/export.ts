@@ -12,6 +12,36 @@ import {
 export const MAX_EXPORT_ROWS = 10000
 export const EXPORT_PAGE_SIZE = 100
 
+/**
+ * Formats a raw date/time string into exact "YYYY-MM-DD HH:mm:ss" without
+ * timezone conversion or locale formatting.
+ *
+ * Handles:
+ * - "2025-06-04T16:39:32.000Z" -> "2025-06-04 16:39:32"
+ * - "2025-06-04T16:39:32"      -> "2025-06-04 16:39:32"
+ * - "2025-06-04 16:39:32"      -> "2025-06-04 16:39:32"
+ * - "2025-06-04T16:39:32+07:00"-> "2025-06-04 16:39:32"
+ */
+export function formatTransactionAt(val: string | null | undefined): string {
+  if (!val) return "-"
+  const s = val.trim()
+  if (!s) return "-"
+
+  // Match YYYY-MM-DD followed by separator (T or space) and HH:mm:ss
+  const match = s.match(/^(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2}:\d{2})/)
+  if (match) {
+    return `${match[1]} ${match[2]}`
+  }
+
+  // Fallback for simple date without time
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    return `${s} 00:00:00`
+  }
+
+  // Safe fallback if format is totally unexpected
+  return s
+}
+
 export function toLocalDateString(d: Date | string): string {
   const date = typeof d === "string" ? new Date(d) : d
   const y = date.getFullYear()

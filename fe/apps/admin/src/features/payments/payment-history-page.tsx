@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { AlertCircleIcon } from "lucide-react"
 import { Input } from "@app/ui/components/input"
+import { Label } from "@app/ui/components/label"
 import { Button } from "@app/ui/components/button"
 import {
   Table,
@@ -17,6 +18,7 @@ import { useAuth } from "@/lib/auth-context"
 import { useDebounced } from "@/lib/use-debounced"
 import { ApiError } from "@/lib/api-client"
 import { reportsApi, type PaymentReportItem } from "@/lib/reports-api"
+import { formatTransactionAt } from "./export"
 import { PaymentExportDialog } from "./payment-export-dialog"
 
 export type PaymentRow = PaymentReportItem
@@ -25,26 +27,25 @@ const PAGE_SIZE = 10
 const REFETCH_INTERVAL = 20000
 
 const amountFmt = new Intl.NumberFormat("id-ID")
-const dateFmt = new Intl.DateTimeFormat("id-ID", {
-  dateStyle: "medium",
-  timeStyle: "short",
-})
 const clockFmt = new Intl.DateTimeFormat("id-ID", { timeStyle: "medium" })
 
 const rupiah = (n: number) => `Rp ${amountFmt.format(n)}`
-const formatDateTime = (val: string) => {
-  if (!val) return "-"
-  const d = new Date(val)
-  return isNaN(d.getTime()) ? val : dateFmt.format(d)
-}
 
 export function PaymentHistoryPage() {
   const { can } = useAuth()
   const canExport = can("payments", "export")
   const [search, setSearch] = useState("")
   const debouncedSearch = useDebounced(search, 300)
+  const [fromDate, setFromDate] = useState("")
+  const [toDate, setToDate] = useState("")
   const [page, setPage] = useState(1)
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null)
+
+  const isInvalidDateRange = Boolean(fromDate && toDate && fromDate > toDate)
+
+  // Only pass dates to API when valid
+  const effectiveFrom = isInvalidDateRange ? undefined : fromDate || undefined
+  const effectiveTo = isInvalidDateRange ? undefined : toDate || undefined
 
   const [tabVisible, setTabVisible] = useState(!document.hidden)
   useEffect(() => {
@@ -57,11 +58,19 @@ export function PaymentHistoryPage() {
     queryKey: [
       "reports",
       "payments",
-      { q: debouncedSearch, page, pageSize: PAGE_SIZE },
+      {
+        q: debouncedSearch,
+        from: effectiveFrom,
+        to: effectiveTo,
+        page,
+        pageSize: PAGE_SIZE,
+      },
     ],
     queryFn: async () => {
       const res = await reportsApi.payments({
         q: debouncedSearch || undefined,
+        from: effectiveFrom,
+        to: effectiveTo,
         page,
         pageSize: PAGE_SIZE,
       })
@@ -70,7 +79,6 @@ export function PaymentHistoryPage() {
     },
     refetchInterval: tabVisible ? REFETCH_INTERVAL : false,
     retry: (failureCount, error) => {
-      // Don't retry 503 REPORTS_UNAVAILABLE immediately
       if (error instanceof ApiError && error.status === 503) return false
       return failureCount < 2
     },
@@ -84,6 +92,14 @@ export function PaymentHistoryPage() {
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const items = query.data?.items ?? []
   const summary = query.data?.summary ?? { count: total, totalAmount: 0 }
+
+  const hasDateFilter = Boolean(fromDate || toDate)
+
+  const handleResetDates = () => {
+    setFromDate("")
+    setToDate("")
+    setPage(1)
+  }
 
   return (
     <div className="grid gap-4">
@@ -121,26 +137,90 @@ export function PaymentHistoryPage() {
         </span>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <Input
-          value={search}
-          onChange={(e) => {
-            setSearch(e.target.value)
-            setPage(1)
-          }}
-          placeholder="Cari VA, nama, atau referensi"
-          aria-label="Cari transaksi"
-          className="w-full max-w-xs"
-          disabled={is503}
-        />
+      <div className="space-y-1.5">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+          <Input
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value)
+              setPage(1)
+            }}
+            placeholder="Cari VA, nama, atau referensi"
+            aria-label="Cari transaksi"
+            className="w-full sm:w-64"
+            disabled={is503}
+          />
+
+          <div className="flex items-center gap-1.5">
+            <Label
+              htmlFor="payments-filter-from"
+              className="text-xs text-muted-foreground whitespace-nowrap"
+            >
+              Dari
+            </Label>
+            <Input
+              id="payments-filter-from"
+              type="date"
+              aria-label="Dari"
+              value={fromDate}
+              onChange={(e) => {
+                setFromDate(e.target.value)
+                setPage(1)
+              }}
+              className="w-36 text-xs"
+              disabled={is503}
+            />
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <Label
+              htmlFor="payments-filter-to"
+              className="text-xs text-muted-foreground whitespace-nowrap"
+            >
+              Sampai
+            </Label>
+            <Input
+              id="payments-filter-to"
+              type="date"
+              aria-label="Sampai"
+              value={toDate}
+              onChange={(e) => {
+                setToDate(e.target.value)
+                setPage(1)
+              }}
+              className="w-36 text-xs"
+              disabled={is503}
+            />
+          </div>
+
+          {hasDateFilter && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleResetDates}
+              disabled={is503}
+            >
+              Reset
+            </Button>
+          )}
+        </div>
+
+        {isInvalidDateRange && (
+          <p
+            role="alert"
+            className="text-xs font-medium text-destructive"
+          >
+            Tanggal Dari tidak boleh melebihi tanggal Sampai
+          </p>
+        )}
       </div>
 
       <div className="overflow-x-auto rounded-xl border">
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Waktu Transaksi</TableHead>
-              <TableHead>Tanggal</TableHead>
+              <TableHead>Tanggal Transaksi</TableHead>
               <TableHead>No VA</TableHead>
               <TableHead>Referensi</TableHead>
               <TableHead>Keterangan</TableHead>
@@ -151,7 +231,10 @@ export function PaymentHistoryPage() {
           <TableBody>
             {is503 ? (
               <TableRow>
-                <TableCell colSpan={7} className="h-32 text-center text-muted-foreground">
+                <TableCell
+                  colSpan={6}
+                  className="h-32 text-center text-muted-foreground"
+                >
                   <div className="flex flex-col items-center justify-center gap-2">
                     <AlertCircleIcon className="size-6 text-amber-500" />
                     <p className="font-medium text-foreground">
@@ -165,7 +248,7 @@ export function PaymentHistoryPage() {
               </TableRow>
             ) : query.isError ? (
               <TableRow>
-                <TableCell colSpan={7} className="h-32 text-center">
+                <TableCell colSpan={6} className="h-32 text-center">
                   <div className="flex flex-col items-center justify-center gap-2">
                     <p className="text-sm text-destructive">
                       {query.error.message || "Gagal memuat data"}
@@ -183,21 +266,26 @@ export function PaymentHistoryPage() {
             ) : (
               <>
                 <TableState
-                  colSpan={7}
+                  colSpan={6}
                   loading={query.isPending}
                   empty={items.length === 0}
                   emptyText="Tidak ada data"
                 />
                 {items.map((r) => (
                   <TableRow key={r.id}>
-                    <TableCell className="text-xs">
-                      {formatDateTime(r.transactionAt)}
+                    <TableCell className="font-mono text-xs whitespace-nowrap">
+                      {formatTransactionAt(r.transactionAt)}
                     </TableCell>
-                    <TableCell className="text-xs">{r.txDate || "-"}</TableCell>
-                    <TableCell className="font-mono text-xs">{r.vaNumber}</TableCell>
-                    <TableCell className="font-mono text-xs">{r.reference || "-"}</TableCell>
+                    <TableCell className="font-mono text-xs">
+                      {r.vaNumber}
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">
+                      {r.reference || "-"}
+                    </TableCell>
                     <TableCell>{r.message || "-"}</TableCell>
-                    <TableCell className="text-right">{rupiah(r.amount)}</TableCell>
+                    <TableCell className="text-right">
+                      {rupiah(r.amount)}
+                    </TableCell>
                     <TableCell>
                       <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-800">
                         Berhasil
