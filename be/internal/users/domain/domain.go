@@ -15,11 +15,15 @@ var (
 	ErrUsernameTaken    = kernel.E(kernel.Conflict, "USERNAME_TAKEN", "Username already in use")
 	ErrInvalidUsername  = kernel.E(kernel.Invalid, "INVALID_USERNAME", "Username must be 3-32 characters of a-z, 0-9, dot, underscore or hyphen")
 	ErrUsernameRequired = kernel.E(kernel.Invalid, "USERNAME_REQUIRED", "Username is required for a mitra user")
-	ErrModifySelf       = kernel.E(kernel.Forbidden, "CANNOT_MODIFY_SELF", "You cannot change your own role or deactivate yourself")
-	ErrInvalidRole      = kernel.E(kernel.Invalid, "INVALID_ROLE", "Role does not exist")
-	ErrAlreadyActive    = kernel.E(kernel.Conflict, "USER_ALREADY_ACTIVE", "User has already accepted the invite")
-	ErrDeleted          = kernel.E(kernel.Conflict, "USER_DELETED", "User is deleted; restore it first")
-	ErrNotDeleted       = kernel.E(kernel.Conflict, "USER_NOT_DELETED", "User is not deleted")
+	ErrMitraRequired    = kernel.E(kernel.Invalid, "MITRA_REQUIRED", "A mitra is required for a mitra role")
+	// ErrDeleteConfirmationMismatch is returned when the DELETE does not carry
+	// the target's exact username (or email) as confirmation.
+	ErrDeleteConfirmationMismatch = kernel.E(kernel.Invalid, "DELETE_CONFIRMATION_MISMATCH", "Delete confirmation does not match the target user")
+	ErrModifySelf                 = kernel.E(kernel.Forbidden, "CANNOT_MODIFY_SELF", "You cannot change your own role or deactivate yourself")
+	ErrInvalidRole                = kernel.E(kernel.Invalid, "INVALID_ROLE", "Role does not exist")
+	ErrAlreadyActive              = kernel.E(kernel.Conflict, "USER_ALREADY_ACTIVE", "User has already accepted the invite")
+	ErrDeleted                    = kernel.E(kernel.Conflict, "USER_DELETED", "User is deleted; restore it first")
+	ErrNotDeleted                 = kernel.E(kernel.Conflict, "USER_NOT_DELETED", "User is not deleted")
 	// ErrRoleNotAllowed is returned when a mitra caller tries to assign a role
 	// outside the mitra-managed set (for example Super Admin).
 	ErrRoleNotAllowed = kernel.E(kernel.Forbidden, "ROLE_NOT_ALLOWED", "Role is not allowed for a mitra user")
@@ -134,6 +138,12 @@ type Repository interface {
 	Create(ctx context.Context, u NewUser) error
 	Update(ctx context.Context, id string, c Changes) error
 	SetDeleted(ctx context.Context, id string, at *time.Time) error
+	// HardDelete removes the user row permanently; cascade foreign keys clear
+	// sessions, tokens, 2FA and the rest.
+	HardDelete(ctx context.Context, id string) error
+	// DeleteAnnouncementsByAuthor clears the user's announcements so the
+	// announcement_author_id_fkey RESTRICT does not block the hard delete.
+	DeleteAnnouncementsByAuthor(ctx context.Context, id string) error
 	SetPassword(ctx context.Context, id, hash string) error
 	RevokeSessions(ctx context.Context, id string) error
 	// RevokeMitraSessions revokes every refresh family of a mitra's users.

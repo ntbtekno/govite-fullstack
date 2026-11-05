@@ -69,6 +69,18 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) error {
 	return err
 }
 
+const deleteUserRow = `-- name: DeleteUserRow :execrows
+DELETE FROM "user" WHERE id = $1
+`
+
+func (q *Queries) DeleteUserRow(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteUserRow, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const existingEmails = `-- name: ExistingEmails :many
 SELECT email FROM "user" WHERE email = ANY($1::text[])
 `

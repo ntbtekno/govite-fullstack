@@ -256,11 +256,20 @@ func (h Handler) Routes(g rbac.Guarded) {
 		if err != nil {
 			return err
 		}
-		v, err := h.Svc.Remove(c.UserContext(), scope(c), id)
+		// The typed confirmation travels in the body; a missing field is an
+		// empty string and always mismatches.
+		var b struct {
+			ConfirmUsername string `json:"confirmUsername"`
+		}
+		if err := httpx.Body(c, &b); err != nil {
+			return err
+		}
+		v, err := h.Svc.Remove(c.UserContext(), scope(c), id, b.ConfirmUsername)
 		if err != nil {
 			return err
 		}
-		h.audit(c, "user.delete", id, v)
+		// The permanent-delete audit snapshot is written inside Remove's
+		// transaction, so nothing is recorded here.
 		return httpx.OK(c, v)
 	})
 

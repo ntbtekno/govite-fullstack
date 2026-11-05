@@ -101,13 +101,21 @@ const administration: Guarded[] = [
 ]
 
 export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
-  const { can } = useAuth()
+  const { can, user } = useAuth()
   const settings = usePublicSettings()
   const appName = settings.data?.appName ?? "Rekanara"
   const logoUrl = settings.data?.logoUrl ?? null
   const visible = (items: Guarded[]) =>
     items.filter((i) => !i.permission || can(...i.permission))
-  const adminItems = visible(administration)
+  // A mitra user only sees itself, so its Users menu opens that user's own
+  // detail page instead of the list. Everyone else keeps the list.
+  const usersUrl =
+    user?.mitraId && user.id
+      ? `/admin/administration/users/${user.id}`
+      : "/admin/administration/users"
+  const adminItems = visible(administration).map((i) =>
+    i.title === "Users" ? { ...i, url: usersUrl } : i
+  )
 
   return (
     <Sidebar variant="inset" {...props}>

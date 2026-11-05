@@ -92,6 +92,18 @@ func (q *Queries) DeleteAnnouncement(ctx context.Context, id string) error {
 	return err
 }
 
+const deleteAnnouncementsByAuthor = `-- name: DeleteAnnouncementsByAuthor :execrows
+DELETE FROM announcement WHERE author_id = $1
+`
+
+func (q *Queries) DeleteAnnouncementsByAuthor(ctx context.Context, authorID string) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteAnnouncementsByAuthor, authorID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getAnnouncement = `-- name: GetAnnouncement :one
 SELECT a.id, a.title, a.content, a.image_url, a.is_pinned, a.status, a.published_at, a.notified_at, a.author_id, a.created_at, a.updated_at, COALESCE(u.full_name, u.email)::text AS author_name
 FROM announcement a JOIN "user" u ON u.id = a.author_id WHERE a.id = $1

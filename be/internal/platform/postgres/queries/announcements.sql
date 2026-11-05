@@ -36,6 +36,9 @@ WHERE id = sqlc.arg(id);
 -- name: DeleteAnnouncement :exec
 DELETE FROM announcement WHERE id = $1;
 
+-- name: DeleteAnnouncementsByAuthor :execrows
+DELETE FROM announcement WHERE author_id = $1;
+
 -- Claim so two concurrent publishes push exactly once.
 -- name: ClaimAnnouncementNotify :execrows
 UPDATE announcement SET notified_at = now() WHERE id = $1 AND notified_at IS NULL AND status = 'published';

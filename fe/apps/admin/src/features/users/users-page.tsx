@@ -38,13 +38,17 @@ import {
   type SortState,
 } from "@/components/list-controls"
 import { saveDownload } from "@/lib/download"
+import { ApiError } from "@/lib/api-client"
 import { useDebounced } from "@/lib/use-debounced"
 import { ConfirmAction } from "@/components/confirm-action"
 import { PageHeader } from "@/components/page"
 import { RequirePermission } from "@/features/auth/require-permission"
 import { useAuth } from "@/lib/auth-context"
+import { mitraApi } from "@/features/mitra/api"
 import { rolesApi } from "@/features/roles/api"
 import { usersApi, type UserListParams } from "@/features/users/api"
+import { TypeToConfirmDialog } from "@/features/users/type-to-confirm-dialog"
+import { isMitraRoleName } from "@/features/users/mitra-role"
 import { UserImportDialog } from "@/features/users/user-import-dialog"
 
 const ANY = "any"
@@ -95,6 +99,18 @@ export function UsersPage() {
     queryFn: () => rolesApi.list({ page: 1, limit: 100 }),
     enabled: can("roles", "manage"),
   })
+  // Active mitras for the selector; only a Superadmin may pick one.
+  const mitras = useQuery({
+    queryKey: ["mitra", "options"],
+    queryFn: () => mitraApi.list({ page: 1, limit: 100 }),
+    enabled: isSuperadmin,
+  })
+  const activeMitras = (mitras.data?.data ?? []).filter((m) => m.isActive)
+  const [createRoleId, setCreateRoleId] = useState("")
+  const createRoleName = roles.data?.data.find(
+    (r) => r.id === createRoleId
+  )?.name
+  const createNeedsMitra = isMitraRoleName(createRoleName)
 
   const exportUsers = useMutation({
     mutationFn: (format: "csv" | "xlsx") =>
@@ -122,10 +138,23 @@ export function UsersPage() {
   })
 
   const remove = useMutation({
-    mutationFn: (id: string) => usersApi.remove(id),
+    mutationFn: ({
+      id,
+      confirmUsername,
+    }: {
+      id: string
+      confirmUsername: string
+    }) => usersApi.remove(id, { confirmUsername }),
     onSuccess: async () => {
       toast.success("User deleted")
       await queryClient.invalidateQueries({ queryKey: ["users"] })
+    },
+    onError: (err) => {
+      if (err instanceof ApiError && err.code === "DELETE_CONFIRMATION_MISMATCH") {
+        toast.error("Confirmation does not match", {
+          description: "Type the username exactly as shown.",
+        })
+      }
     },
   })
 
@@ -140,10 +169,16 @@ export function UsersPage() {
         fullName: String(form.get("fullName")),
         username: String(form.get("username")) || undefined,
         roleId: String(form.get("roleId")),
+        mitraId: String(form.get("mitraId")) || undefined,
         // Empty password means "invite by email" on the API side.
         password: String(form.get("password")) || undefined,
       },
-      { onSuccess: () => setOpen(false) }
+      {
+        onSuccess: () => {
+          setOpen(false)
+          setCreateRoleId("")
+        },
+      }
     )
   }
 
@@ -200,7 +235,7 @@ export function UsersPage() {
                       id="username"
                       name="username"
                       autoComplete="off"
-                      pattern="[a-z0-9._-]{3,32}"
+                      pattern="[a-z0-9._\-]{3,32}"
                       required={!isSuperadmin}
                     />
                     <p className="text-xs text-muted-foreground">
@@ -224,7 +259,12 @@ export function UsersPage() {
                   </div>
                   <div className="grid gap-2">
                     <Label htmlFor="roleId">Role</Label>
-                    <Select name="roleId" required>
+                    <Select
+                      name="roleId"
+                      required
+                      value={createRoleId}
+                      onValueChange={setCreateRoleId}
+                    >
                       <SelectTrigger id="roleId">
                         <SelectValue placeholder="Select a role" />
                       </SelectTrigger>
@@ -237,6 +277,28 @@ export function UsersPage() {
                       </SelectContent>
                     </Select>
                   </div>
+                  {isSuperadmin && (
+                    <div className="grid gap-2">
+                      <Label htmlFor="mitraId">Mitra</Label>
+                      <Select name="mitraId" required={createNeedsMitra}>
+                        <SelectTrigger id="mitraId">
+                          <SelectValue placeholder="Select a mitra" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {activeMitras.map((m) => (
+                            <SelectItem key={m.id} value={m.id}>
+                              {m.nama} ({m.kodeMitra})
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">
+                        {createNeedsMitra
+                          ? "Required for a mitra role."
+                          : "Optional; required for a mitra role."}
+                      </p>
+                    </div>
+                  )}
                 </form>
                 <DialogFooter>
                   <Button
@@ -494,11 +556,27 @@ export function UsersPage() {
                     </Link>
                   </Button>
                   {canManage && user.id !== currentUserId && !user.deletedAt && (
-                    <ConfirmAction
+                    <TypeToConfirmDialog
                       title={`Hapus ${user.fullName ?? user.email}?`}
-                      description={`User ${user.email} tidak bisa login lagi sesudah dihapus.`}
-                      confirmLabel="Hapus"
-                      onConfirm={() => remove.mutate(user.id)}
+                      description={
+                        <>
+                          Menghapus{" "}
+                          <span className="font-medium">
+                            {user.fullName ?? user.email}
+                          </span>{" "}
+                          (username: {user.username ?? "—"}, email:{" "}
+                          {user.email}) bersifat permanen dan tidak bisa
+                          dibatalkan.
+                        </>
+                      }
+                      confirmWord={user.username ?? user.email}
+                      pending={remove.isPending}
+                      onConfirm={() =>
+                        remove.mutate({
+                          id: user.id,
+                          confirmUsername: user.username ?? user.email,
+                        })
+                      }
                       trigger={
                         <Button
                           variant="ghost"

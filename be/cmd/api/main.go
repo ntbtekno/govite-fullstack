@@ -25,6 +25,7 @@ import (
 	"govite/internal/platform/config"
 	"govite/internal/platform/crypto"
 	"govite/internal/platform/fcm"
+	"govite/internal/platform/loginlog"
 	"govite/internal/platform/mail"
 	postgres "govite/internal/platform/postgres"
 	"govite/internal/platform/postgres/store"
@@ -101,8 +102,15 @@ func newPool(ctx context.Context, url string) (*pgxpool.Pool, error) {
 	return pgxpool.NewWithConfig(ctx, pc)
 }
 
+// loginLogDir is where the daily auth-*.log files live, relative to the
+// backend working directory.
+const loginLogDir = "logs"
+
 func serve(ctx context.Context, cfg config.Config, pool *pgxpool.Pool) error {
-	d := server.Deps{Cfg: cfg, Pool: pool}
+	logs := loginlog.New(loginLogDir, func(err error) {
+		slog.Error("login log write failed", "err", err)
+	})
+	d := server.Deps{Cfg: cfg, Pool: pool, LoginLog: server.AttemptRecorder{Log: logs}}
 	if cfg.RedisURL != "" {
 		opt, err := redis.ParseURL(cfg.RedisURL)
 		if err != nil {
@@ -139,6 +147,8 @@ func serve(ctx context.Context, cfg config.Config, pool *pgxpool.Pool) error {
 	f, sys := server.New(d)
 	daily := make(chan struct{})
 	go func() { sys.RunDaily(ctx); close(daily) }()
+	// Prune old login-log files at boot and once a day while serving.
+	go logs.RunDaily(ctx)
 	errc := make(chan error, 1)
 	go func() { errc <- f.Listen(fmt.Sprintf(":%d", cfg.Port)) }()
 	slog.Info("api listening", "port", cfg.Port, "env", cfg.Env)

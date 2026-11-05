@@ -1,7 +1,9 @@
 package httpx
 
 import (
+	"errors"
 	"io"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -73,4 +75,24 @@ func StatusOf(err error) int {
 		}
 	}
 	return 500
+}
+
+// CodeOf is the error code an error renders as (for audit-style logs). It
+// mirrors ErrorHandler so the logged code matches the response envelope.
+func CodeOf(err error) string {
+	var (
+		de *Error
+		ke *kernel.Error
+		fe *fiber.Error
+	)
+	switch {
+	case errors.As(err, &de):
+		return de.Code
+	case errors.As(err, &ke):
+		return ke.Code
+	case errors.As(err, &fe):
+		return strings.ToUpper(strings.ReplaceAll(statusName(fe.Code), " ", "_"))
+	default:
+		return "INTERNAL_SERVER_ERROR"
+	}
 }

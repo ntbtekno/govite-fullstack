@@ -92,6 +92,12 @@ export type ResetUserPasswordRequest = z.infer<
   typeof ResetUserPasswordRequestSchema
 >
 
+export const DeleteUserRequestSchema = z.object({
+  // Must equal the target's username, or its email when it has no username.
+  confirmUsername: z.string(),
+})
+export type DeleteUserRequest = z.infer<typeof DeleteUserRequestSchema>
+
 export const UserListQuerySchema = PaginationQuerySchema.extend({
   roleId: z.uuid().optional(),
   sort: z

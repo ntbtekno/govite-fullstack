@@ -5,7 +5,6 @@ import (
 	"context"
 	"regexp"
 	"strings"
-	"time"
 
 	"govite/internal/kernel"
 	"govite/internal/users/domain"
@@ -22,6 +21,16 @@ func actor(ctx context.Context) string { return kernel.PrincipalFrom(ctx).ID }
 
 // mitraRoles are the only role names a mitra caller may assign to a user.
 var mitraRoles = map[string]bool{"mitra_admin": true, "mitra_staff": true}
+
+// isMitraRole reports whether roleID names a mitra-managed role (MITRA_ADMIN or
+// MITRA_STAFF). Such a user must be bound to a mitra to ever log in.
+func (s *Service) isMitraRole(ctx context.Context, roleID string) (bool, error) {
+	name, err := s.Repo.RoleName(ctx, roleID)
+	if err != nil {
+		return false, err
+	}
+	return mitraRoles[strings.ToLower(name)], nil
+}
 
 // usernameRe allows lower-case letters, digits, dot, underscore and hyphen.
 // A leading @ is impossible, so a username can never be confused with an email
@@ -132,6 +141,13 @@ func (s *Service) Create(ctx context.Context, sc domain.Scope, in CreateInput) (
 	if own, ok := sc.MitraFilter(); ok {
 		mitraID = &own
 	}
+	// A mitra role without a mitra can never log in; refuse it up front.
+	// Non-mitra roles (e.g. Super Admin) are still allowed without a mitra.
+	if mitraRole, err := s.isMitraRole(ctx, in.RoleID); err != nil {
+		return domain.User{}, err
+	} else if mitraRole && mitraID == nil {
+		return domain.User{}, domain.ErrMitraRequired
+	}
 	raw := strings.TrimSpace(in.Username)
 	if raw == "" {
 		if mitraID != nil {
@@ -203,6 +219,21 @@ func (s *Service) Update(ctx context.Context, sc domain.Scope, id string, c doma
 			return cur, err
 		}
 	}
+	// Effective role and mitra after the patch: a mitra role must keep a mitra,
+	// so changing a user into (or within) a mitra role with no mitra is refused.
+	effRoleID := cur.RoleID
+	if c.RoleID != nil {
+		effRoleID = *c.RoleID
+	}
+	effMitra := cur.MitraID
+	if c.MitraID != nil {
+		effMitra = c.MitraID
+	}
+	if mitraRole, err := s.isMitraRole(ctx, effRoleID); err != nil {
+		return cur, err
+	} else if mitraRole && effMitra == nil {
+		return cur, domain.ErrMitraRequired
+	}
 	if c.Username != nil {
 		u, err := validateUsername(*c.Username)
 		if err != nil {
@@ -243,8 +274,12 @@ func (s *Service) Update(ctx context.Context, sc domain.Scope, id string, c doma
 	return s.Repo.Get(ctx, id)
 }
 
-// Remove soft-deletes and signs out atomically; deleting twice is a no-op.
-func (s *Service) Remove(ctx context.Context, sc domain.Scope, id string) (domain.User, error) {
+// Remove permanently deletes the user. confirmUsername must equal the target's
+// username (or email when the username is NULL); anything else is refused with
+// ErrDeleteConfirmationMismatch and the user is left untouched. The delete, the
+// session revoke and the audit snapshot happen in one transaction; the audit
+// row keeps the target's username and email because the user row is gone after.
+func (s *Service) Remove(ctx context.Context, sc domain.Scope, id, confirmUsername string) (domain.User, error) {
 	cur, err := s.Repo.Get(ctx, id)
 	if err != nil {
 		return cur, err
@@ -256,20 +291,66 @@ func (s *Service) Remove(ctx context.Context, sc domain.Scope, id string) (domai
 	if actor(ctx) == id {
 		return cur, domain.ErrModifySelf
 	}
-	if cur.DeletedAt != nil {
-		return cur, nil
+	// The typed word must match the target's username, or its email when the
+	// user has no username.
+	want := cur.Email
+	if cur.Username != nil {
+		want = *cur.Username
 	}
-	now := time.Now()
-	err = s.Tx.Do(ctx, func(ctx context.Context) error {
-		if err := s.Repo.SetDeleted(ctx, id, &now); err != nil {
-			return err
-		}
-		return s.Repo.RevokeSessions(ctx, id)
-	})
+	if confirmUsername != want {
+		return cur, domain.ErrDeleteConfirmationMismatch
+	}
+	if err := s.hardDelete(ctx, cur); err != nil {
+		return cur, err
+	}
+	return cur, nil
+}
+
+// removeBulk is the bulk delete entry point: it applies the same scope and
+// self checks as Remove, then hard-deletes. The typed confirmation gate is a
+// per-row UI safeguard and does not apply to the bulk action.
+func (s *Service) removeBulk(ctx context.Context, sc domain.Scope, id string) (domain.User, error) {
+	cur, err := s.Repo.Get(ctx, id)
 	if err != nil {
 		return cur, err
 	}
-	return s.Repo.Get(ctx, id)
+	if !visible(cur, sc) {
+		s.denyCrossMitra(ctx, "user.delete_cross_mitra", id, cur, sc)
+		return cur, domain.ErrNotFound
+	}
+	if actor(ctx) == id {
+		return cur, domain.ErrModifySelf
+	}
+	if err := s.hardDelete(ctx, cur); err != nil {
+		return cur, err
+	}
+	return cur, nil
+}
+
+// hardDelete removes cur for good in one transaction: revoke sessions, drop the
+// user's announcements (RESTRICT), write the audit snapshot (the row is about
+// to vanish), then delete the row. Shared by the single delete and the bulk
+// delete; the typed confirmation is enforced by Remove before calling this.
+func (s *Service) hardDelete(ctx context.Context, cur domain.User) error {
+	return s.Tx.Do(ctx, func(ctx context.Context) error {
+		if err := s.Repo.RevokeSessions(ctx, cur.ID); err != nil {
+			return err
+		}
+		if err := s.Repo.DeleteAnnouncementsByAuthor(ctx, cur.ID); err != nil {
+			return err
+		}
+		if s.Audit != nil {
+			s.Audit.Record(ctx, "user.delete", "user", cur.ID, nil, map[string]any{
+				"username": cur.Username,
+				"email":    cur.Email,
+				"fullName": cur.FullName,
+				"mitraId":  cur.MitraID,
+				"roleId":   cur.RoleID,
+				"hard":     true,
+			})
+		}
+		return s.Repo.HardDelete(ctx, cur.ID)
+	})
 }
 
 func (s *Service) Restore(ctx context.Context, sc domain.Scope, id string) (domain.User, error) {
@@ -348,7 +429,7 @@ func (s *Service) Bulk(ctx context.Context, sc domain.Scope, ids []string, actio
 		var err error
 		switch action {
 		case "delete":
-			_, err = s.Remove(ctx, sc, id)
+			_, err = s.removeBulk(ctx, sc, id)
 		case "restore":
 			_, err = s.Restore(ctx, sc, id)
 		default:

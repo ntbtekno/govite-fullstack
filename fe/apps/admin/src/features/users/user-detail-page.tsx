@@ -1,4 +1,4 @@
-import { type FormEvent } from "react"
+import { useState, type FormEvent } from "react"
 import { SECURITY_POLICY } from "@app/contracts"
 import { Link, useParams } from "@tanstack/react-router"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
@@ -23,8 +23,11 @@ import {
   StatusBadge,
 } from "@/components/detail-layout"
 import { RequirePermission } from "@/features/auth/require-permission"
+import { mitraApi } from "@/features/mitra/api"
 import { rolesApi } from "@/features/roles/api"
 import { usersApi } from "@/features/users/api"
+import { TypeToConfirmDialog } from "@/features/users/type-to-confirm-dialog"
+import { isMitraRoleName } from "@/features/users/mitra-role"
 import { UserActivity } from "@/features/audit/user-activity"
 import { useAuth } from "@/lib/auth-context"
 
@@ -42,6 +45,21 @@ export function UserDetailPage() {
     queryFn: () => rolesApi.list({ page: 1, limit: 100 }),
     enabled: can("roles", "manage"),
   })
+  const isSuperadmin = !useAuth().user?.mitraId
+  // Active mitras for the selector; only a Superadmin may change one.
+  const mitras = useQuery({
+    queryKey: ["mitra", "options"],
+    queryFn: () => mitraApi.list({ page: 1, limit: 100 }),
+    enabled: isSuperadmin,
+  })
+  const activeMitras = (mitras.data?.data ?? []).filter((m) => m.isActive)
+  // The role select starts at the loaded user's role and follows any change;
+  // null means "not touched yet", so no effect is needed to sync.
+  const [roleOverride, setRoleOverride] = useState<string | null>(null)
+  const roleId = roleOverride ?? user.data?.roleId ?? ""
+  const selectedRoleName = roles.data?.data.find((r) => r.id === roleId)?.name
+  const effectiveRoleName = selectedRoleName ?? user.data?.roleName
+  const needsMitra = isMitraRoleName(effectiveRoleName)
   const invalidate = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["users"] }),
@@ -69,7 +87,8 @@ export function UserDetailPage() {
     onSuccess: () => toast.success("Invite sent"),
   })
   const remove = useMutation({
-    mutationFn: () => usersApi.remove(userId),
+    mutationFn: (confirmUsername: string) =>
+      usersApi.remove(userId, { confirmUsername }),
     onSuccess: async () => {
       toast.success("User deleted")
       await invalidate()
@@ -90,6 +109,7 @@ export function UserDetailPage() {
       fullName: String(form.get("fullName")),
       roleId: String(form.get("roleId")),
       username: String(form.get("username")) || undefined,
+      mitraId: String(form.get("mitraId")) || undefined,
     })
   }
 
@@ -152,7 +172,7 @@ export function UserDetailPage() {
                       id="username"
                       name="username"
                       autoComplete="off"
-                      pattern="[a-z0-9._-]{3,32}"
+                      pattern="[a-z0-9._\-]{3,32}"
                       defaultValue={user.data.username ?? ""}
                       disabled={!canManage}
                       required={!!user.data.mitraId}
@@ -166,7 +186,8 @@ export function UserDetailPage() {
                     <Label htmlFor="roleId">Role</Label>
                     <Select
                       name="roleId"
-                      defaultValue={user.data.roleId}
+                      value={roleId}
+                      onValueChange={setRoleOverride}
                       disabled={!canManage}
                       required
                     >
@@ -182,6 +203,33 @@ export function UserDetailPage() {
                       </SelectContent>
                     </Select>
                   </div>
+                  {isSuperadmin && (
+                    <div className="grid gap-2">
+                      <Label htmlFor="mitraId">Mitra</Label>
+                      <Select
+                        name="mitraId"
+                        defaultValue={user.data.mitraId ?? undefined}
+                        disabled={!canManage}
+                        required={needsMitra}
+                      >
+                        <SelectTrigger id="mitraId">
+                          <SelectValue placeholder="No mitra" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {activeMitras.map((m) => (
+                            <SelectItem key={m.id} value={m.id}>
+                              {m.nama} ({m.kodeMitra})
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">
+                        {needsMitra
+                          ? "Required for a mitra role."
+                          : "Optional; required for a mitra role."}
+                      </p>
+                    </div>
+                  )}
                   {canManage && (
                     <Button type="submit" disabled={update.isPending}>
                       Save profile
@@ -210,12 +258,27 @@ export function UserDetailPage() {
                     </Button>
                   )}
                   {!user.data.deletedAt && (
-                    <ConfirmAction
-                      title={`Delete ${user.data.email}?`}
-                      description="User will be hidden from active lists and signed out."
+                    <TypeToConfirmDialog
+                      title={`Delete ${user.data.fullName ?? user.data.email}?`}
+                      description={
+                        <>
+                          Deleting{" "}
+                          <span className="font-medium">
+                            {user.data.fullName ?? user.data.email}
+                          </span>{" "}
+                          (username: {user.data.username ?? "—"}, email:{" "}
+                          {user.data.email}) is permanent and cannot be undone.
+                        </>
+                      }
+                      confirmWord={user.data.username ?? user.data.email}
                       confirmLabel="Delete"
-                      onConfirm={() => remove.mutate()}
-                      trigger={<Button variant="destructive">Delete user</Button>}
+                      pending={remove.isPending}
+                      onConfirm={() =>
+                        remove.mutate(user.data.username ?? user.data.email)
+                      }
+                      trigger={
+                        <Button variant="destructive">Delete user</Button>
+                      }
                     />
                   )}
                 </DangerZone>

@@ -36,6 +36,7 @@ import (
 	"govite/internal/platform/config"
 	"govite/internal/platform/crypto"
 	"govite/internal/platform/fcm"
+	"govite/internal/platform/loginlog"
 	"govite/internal/platform/mail"
 	"govite/internal/platform/postgres"
 	"govite/internal/platform/storage"
@@ -72,6 +73,28 @@ type Deps struct {
 	// CaptchaCode overrides the code generator. Only the non-production e2e
 	// hook sets it, so a headless browser can log in.
 	CaptchaCode func() (string, error)
+	// LoginLog, when non-nil, records one text line per login attempt. Tests can
+	// inject one rooted at a temp dir.
+	LoginLog authhttp.AttemptLogger
+}
+
+// LoginAttempt is one line's metadata, re-exported so cmd/api does not import
+// the auth http package directly.
+type LoginAttempt = authhttp.LoginAttempt
+
+// AttemptRecorder adapts a loginlog.Logger to the AttemptLogger the auth
+// handler wants. It is the single place that knows both shapes.
+type AttemptRecorder struct{ Log *loginlog.Logger }
+
+func (r AttemptRecorder) Record(a authhttp.LoginAttempt) {
+	r.Log.Record(loginlog.Record{
+		Endpoint:  a.Endpoint,
+		MitraKode: a.MitraKode,
+		Login:     a.Login,
+		Status:    a.Status,
+		ErrCode:   a.ErrCode,
+		IP:        a.IP,
+	})
 }
 
 // Settings reads the app settings without a full server, e.g. for the mail brand.
@@ -176,6 +199,7 @@ func wire(d Deps) (handlers, *sysapp.Service) {
 				return rb.Grants(c.UserContext(), roleID)
 			},
 			AvatarURL: d.Files.URL,
+			LoginLog:  d.LoginLog,
 		},
 		account: accounthttp.Handler{Svc: &accountapp.Service{Repo: accountinfra.Repository{DB: db}, Audit: auditor}},
 		files:   fileshttp.Handler{Svc: &filesapp.Service{Repo: filesinfra.Repository{DB: db}, Store: files, Audit: auditor}},

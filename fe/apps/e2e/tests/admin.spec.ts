@@ -89,22 +89,34 @@ test("sign in, session survives reload, every page renders, sign out", async ({
   expect(problems).toEqual([])
 })
 
+// Creates a user with the given username and returns its email. Uses the
+// Super Admin role so no mitra is required.
+async function createUser(
+  page: Page,
+  email: string,
+  username: string
+): Promise<void> {
+  await page.getByRole("button", { name: "Add user" }).click()
+  const dialog = page.getByRole("dialog", { name: "New user" })
+  await dialog.getByLabel("Full name").fill("E2E User")
+  await dialog.getByLabel("Email").fill(email)
+  await dialog.getByLabel("Username").fill(username)
+  await dialog.getByLabel("Initial password").fill(password)
+  await dialog.getByRole("combobox", { name: "Role" }).click()
+  await page.getByRole("option", { name: "Super Admin" }).click()
+  await dialog.getByRole("button", { name: "Create" }).click()
+  await expect(dialog).toBeHidden()
+}
+
 test("create a user from the dialog", async ({ page }) => {
   const problems = watch(page)
   await signIn(page)
   await page.goto("/admin/administration/users")
 
-  const newEmail = `e2e-${Date.now()}@test.local`
-  await page.getByRole("button", { name: "Add user" }).click()
-  const dialog = page.getByRole("dialog", { name: "New user" })
-  await dialog.getByLabel("Full name").fill("E2E User")
-  await dialog.getByLabel("Email").fill(newEmail)
-  await dialog.getByLabel("Initial password").fill(password)
-  await dialog.getByRole("combobox", { name: "Role" }).click()
-  await page.getByRole("option").first().click()
-  await dialog.getByRole("button", { name: "Create" }).click()
+  const stamp = Date.now()
+  const newEmail = `e2e-${stamp}@test.local`
+  await createUser(page, newEmail, `e2e-${stamp}`)
 
-  await expect(dialog).toBeHidden()
   await page.getByPlaceholder(/search/i).fill(newEmail)
   await expect(
     page.getByRole("cell", { name: newEmail, exact: true })
@@ -113,38 +125,41 @@ test("create a user from the dialog", async ({ page }) => {
   expect(problems).toEqual([])
 })
 
-// Proves the per-row Hapus action opens a confirmation dialog naming the user
-// and that cancelling does not delete them.
-test("delete user opens a confirm dialog and cancel keeps the user", async ({
+// Proves the permanent-delete dialog keeps the button disabled until the exact
+// username is typed, and that cancelling deletes nothing.
+test("delete user requires typing the username and cancel keeps the user", async ({
   page,
 }) => {
   const problems = watch(page)
   await signIn(page)
   await page.goto("/admin/administration/users")
 
-  const newEmail = `e2e-del-${Date.now()}@test.local`
-  await page.getByRole("button", { name: "Add user" }).click()
-  const createDialog = page.getByRole("dialog", { name: "New user" })
-  await createDialog.getByLabel("Full name").fill("E2E Delete Me")
-  await createDialog.getByLabel("Email").fill(newEmail)
-  await createDialog.getByLabel("Initial password").fill(password)
-  await createDialog.getByRole("combobox", { name: "Role" }).click()
-  await page.getByRole("option").first().click()
-  await createDialog.getByRole("button", { name: "Create" }).click()
-  await expect(createDialog).toBeHidden()
+  const stamp = Date.now()
+  const newEmail = `e2e-del-${stamp}@test.local`
+  const newUsername = `e2e-del-${stamp}`
+  await createUser(page, newEmail, newUsername)
 
   await page.getByPlaceholder(/search/i).fill(newEmail)
   const row = page.getByRole("row", { name: new RegExp(newEmail) })
   await expect(row).toBeVisible()
 
   await row.getByRole("button", { name: "Hapus" }).click()
-  const confirm = page.getByRole("alertdialog")
+  const confirm = page.getByRole("dialog")
   await expect(confirm).toBeVisible()
+  // The dialog warns this is permanent and names the target.
   await expect(confirm).toContainText(newEmail)
+
+  const deleteButton = confirm.getByRole("button", { name: "Hapus" })
+  // Disabled until the typed word matches the username exactly.
+  await expect(deleteButton).toBeDisabled()
+  await confirm.getByLabel(/Type/).fill("wrong-username")
+  await expect(deleteButton).toBeDisabled()
+  await confirm.getByLabel(/Type/).fill(newUsername)
+  await expect(deleteButton).toBeEnabled()
+
+  // Cancel deletes nothing.
   await confirm.getByRole("button", { name: "Cancel" }).click()
   await expect(confirm).toBeHidden()
-
-  // The user is still listed after cancelling.
   await expect(
     page.getByRole("cell", { name: newEmail, exact: true })
   ).toBeVisible()
@@ -184,6 +199,52 @@ test("sign in as mitra via /login-mitra", async ({ page }) => {
   await expect(page.getByRole("link", { name: "Roles" })).toHaveCount(0)
   await expect(page.getByRole("link", { name: "Settings" })).toHaveCount(0)
   await expect(page.getByRole("link", { name: "Mitra" })).toHaveCount(0)
+
+  expect(problems).toEqual([])
+})
+
+// A mitra user only sees itself, so the Users menu must open that user's own
+// detail page (id from the auth context), never the user list.
+test("mitra Users menu opens its own detail page", async ({ page }) => {
+  const problems = watch(page)
+  await page.goto("/login-mitra")
+  await page.getByLabel("Kode Mitra").fill(mitraKode)
+  await page.getByLabel("Username atau Email").fill(mitraUsername)
+  await page.getByLabel("Password").fill(mitraPassword)
+  await page.getByRole("textbox", { name: "Captcha" }).fill(captcha)
+  await page.getByRole("button", { name: "Sign in" }).click()
+  await expect(page).toHaveURL(/\/admin\/dashboard/)
+
+  await page.getByRole("link", { name: "Users" }).click()
+
+  // The detail route for the signed-in user, not the list.
+  await expect(page).toHaveURL(
+    /\/admin\/administration\/users\/[0-9a-f-]{36}$/
+  )
+  await expect(page.getByText("User detail")).toBeVisible()
+  await expect(page.getByLabel("Username")).toHaveValue(mitraUsername)
+  // The list's heading and "Add user" action are absent on the detail page.
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Users" })
+  ).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Add user" })).toHaveCount(0)
+
+  expect(problems).toEqual([])
+})
+
+// The Superadmin keeps the user list: its Users menu must not be redirected to
+// a detail page.
+test("Superadmin Users menu keeps the user list", async ({ page }) => {
+  const problems = watch(page)
+  await signIn(page)
+
+  await page.getByRole("link", { name: "Users" }).click()
+
+  await expect(page).toHaveURL(/\/admin\/administration\/users$/)
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Users" })
+  ).toBeVisible()
+  await expect(page.getByRole("button", { name: "Add user" })).toBeVisible()
 
   expect(problems).toEqual([])
 })

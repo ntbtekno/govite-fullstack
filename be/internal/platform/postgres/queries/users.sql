@@ -51,6 +51,9 @@ WHERE id = sqlc.arg(id);
 UPDATE "user" SET deleted_at = sqlc.narg(deleted_at), is_active = sqlc.narg(deleted_at)::timestamptz IS NULL
 WHERE id = sqlc.arg(id);
 
+-- name: DeleteUserRow :execrows
+DELETE FROM "user" WHERE id = $1;
+
 -- name: ExistingEmails :many
 SELECT email FROM "user" WHERE email = ANY(@emails::text[]);
 

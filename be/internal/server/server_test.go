@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -30,6 +31,7 @@ import (
 	"govite/internal/platform/config"
 	"govite/internal/platform/crypto"
 	"govite/internal/platform/fcm"
+	"govite/internal/platform/loginlog"
 	"govite/internal/platform/mail"
 	"govite/internal/platform/postgres"
 	"govite/internal/platform/postgres/store"
@@ -41,12 +43,13 @@ import (
 const password = "Password123!"
 
 type env struct {
-	t    *testing.T
-	f    *fiber.App
-	q    *store.Queries
-	pool *pgxpool.Pool
-	mail *mail.Memory
-	push *fcm.Memory
+	t       *testing.T
+	f       *fiber.App
+	q       *store.Queries
+	pool    *pgxpool.Pool
+	mail    *mail.Memory
+	push    *fcm.Memory
+	logsDir string
 }
 
 func setup(t *testing.T) *env {
@@ -76,7 +79,10 @@ func setupWith(t *testing.T, capStore authdomain.CaptchaStore, image authdomain.
 	m := &mail.Memory{}
 	cfg := config.Config{Env: "test", WebURL: "http://web.test", JWTSecret: strings.Repeat("s", 32), RefreshPepper: strings.Repeat("p", 16), ThrottleLimit: 100000, LoginThrottleLimit: 100000, CaptchaThrottleLimit: 100000, LogLevel: "silent", MidtransServerKey: "test-server-key"}
 	push := &fcm.Memory{}
-	d := server.Deps{Cfg: cfg, Pool: pool, Mail: m, Push: push, CaptchaImage: image, CaptchaStore: capStore}
+	// A per-test temp dir for the daily login log, so a test can read it back.
+	logsDir := t.TempDir()
+	d := server.Deps{Cfg: cfg, Pool: pool, Mail: m, Push: push, CaptchaImage: image, CaptchaStore: capStore,
+		LoginLog: server.AttemptRecorder{Log: loginlog.New(logsDir, func(err error) { t.Logf("login log: %v", err) })}}
 	if endpoint := os.Getenv("TEST_MINIO_ENDPOINT"); endpoint != "" {
 		d.Files, err = storage.New(storage.Config{Endpoint: endpoint, AccessKey: "minio", SecretKey: "minio12345", Bucket: "app-test", PublicEndpoint: "http://" + endpoint})
 		if err != nil {
@@ -87,7 +93,7 @@ func setupWith(t *testing.T, capStore authdomain.CaptchaStore, image authdomain.
 		}
 	}
 	f, _ := server.New(d)
-	return &env{t, f, store.New(pool), pool, m, push}
+	return &env{t, f, store.New(pool), pool, m, push, logsDir}
 }
 
 // seedUser creates a role holding perms (scope all) and an active user in it.
@@ -820,6 +826,82 @@ func TestLoginMitraTenantIsolation(t *testing.T) {
 	e.loginMitra("MTR-ISO-A", "iso-a@test.local")
 }
 
+// todayLog returns the lines of today's auth-*.log in the test env, the file
+// name, and a read helper. It fails the test when the file is missing.
+func (e *env) todayLog() (string, []string) {
+	e.t.Helper()
+	name := "auth-" + time.Now().Format("2006-01-02") + ".log"
+	raw, err := os.ReadFile(filepath.Join(e.logsDir, name))
+	if err != nil {
+		e.t.Fatalf("read %s: %v", name, err)
+	}
+	return name, strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+}
+
+// TestLoginAttemptsAreWrittenToDailyTextLog proves each login attempt writes
+// exactly one metadata line, including the failed-captcha case, and that no
+// password or captcha value ever reaches the file.
+func TestLoginAttemptsAreWrittenToDailyTextLog(t *testing.T) {
+	e := setup(t)
+
+	// A unique password value that must never appear in the log.
+	markerPwd := "PWD_MARKER_7f3a1b2c"
+
+	// 1. A successful Superadmin login lands one line with the 201 status.
+	e.seedUser("root-log@test.local")
+	id, answer := e.solveCaptcha()
+	r := e.do("POST", "/auth/login", map[string]string{"login": "root-log@test.local", "password": password, "captchaId": id, "captcha": answer})
+	expect(t, r, 201)
+
+	_, lines := e.todayLog()
+	if len(lines) != 1 {
+		t.Fatalf("want 1 line after one login, got %d: %q", len(lines), lines)
+	}
+	f := strings.Split(lines[0], "\t")
+	if len(f) != 7 {
+		t.Fatalf("want 7 fields, got %d: %q", len(f), lines[0])
+	}
+	if f[1] != "/auth/login" || f[2] != "-" {
+		t.Fatalf("endpoint/mitra fields wrong: %q", lines[0])
+	}
+	if f[4] != "201" || f[5] != "-" {
+		t.Fatalf("success status/code wrong: %q", lines[0])
+	}
+
+	// 2. A mitra attempt with a wrong password but a valid captcha: one more
+	// line, 401 INVALID_CREDENTIALS, carrying the mitra code. The password and
+	// the captcha answer must not be present anywhere in the file.
+	mitra := e.seedMitra("MTR-LOG", "Mitra Log")
+	e.seedMitraUser("log-mitra@test.local", "log-mitra", mitra, "mitra", policy.Permission{Resource: "users", Action: "view"})
+	id2, captcha2 := e.solveCaptcha()
+	bad := e.do("POST", "/auth/login-mitra", map[string]string{"mitraKode": "MTR-LOG", "username": "log-mitra", "password": markerPwd, "captchaId": id2, "captcha": captcha2})
+	expect(t, bad, 401, "INVALID_CREDENTIALS")
+
+	// 3. A failed captcha attempt is also logged.
+	e.do("POST", "/auth/login-mitra", map[string]string{"mitraKode": "MTR-LOG", "username": "log-mitra", "password": markerPwd, "captchaId": id2, "captcha": "ZZZZZ"})
+
+	name, lines := e.todayLog()
+	if len(lines) != 3 {
+		t.Fatalf("want 3 lines after three attempts, got %d: %q", len(lines), lines)
+	}
+	all := strings.Join(lines, "\n")
+	if strings.Contains(all, password) || strings.Contains(all, markerPwd) {
+		t.Fatalf("log leaked a password: %q", all)
+	}
+	if captcha2 != "" && strings.Contains(all, captcha2) {
+		t.Fatalf("log leaked a captcha answer: %q", all)
+	}
+	if strings.Contains(all, id2) {
+		t.Fatalf("log leaked a captcha id: %q", all)
+	}
+	if !strings.Contains(all, "MTR-LOG") || !strings.Contains(all, "/auth/login-mitra") {
+		t.Fatalf("mitra attempt not logged with its code: %q", all)
+	}
+	if !strings.Contains(name, time.Now().Format("2006-01-02")) {
+		t.Fatalf("log file not dated today: %q", name)
+	}
+}
+
 // TestLegacyUserGetsUsernameViaUpdate proves a Superadmin can give a legacy user
 // (username still NULL) a username through the update endpoint, after which
 // /login-mitra works for that mitra user.
@@ -851,9 +933,10 @@ func TestLegacyUserGetsUsernameViaUpdate(t *testing.T) {
 	e.loginMitra("MTR-LEG", "legacy-user")
 }
 
-// TestDeletedUserCannotLogIn proves the remove endpoint (soft delete) stops a
-// mitra user from logging in.
-func TestDeletedUserCannotLogIn(t *testing.T) {
+// TestHardDeleteUser proves the remove endpoint permanently deletes the row:
+// the user is gone from the database, its sessions are revoked, it can no
+// longer log in, and its username and email are free for a fresh user.
+func TestHardDeleteUser(t *testing.T) {
 	e := setup(t)
 	ctx := context.Background()
 
@@ -864,20 +947,125 @@ func TestDeletedUserCannotLogIn(t *testing.T) {
 	for _, p := range perms {
 		must(t, e.q.InsertRolePermission(ctx, store.InsertRolePermissionParams{ID: kernel.NewID(), RoleID: roleID, Resource: p.Resource, Action: p.Action, Scope: "mitra"}))
 	}
-	adminID, _ := e.seedMitraUser("admin-del@test.local", "admin-del", mitra, "mitra", perms...)
-	_ = adminID
+	e.seedMitraUser("admin-del@test.local", "admin-del", mitra, "mitra", perms...)
 	tok, _ := e.loginMitra("MTR-DEL", "admin-del")
 
 	r := e.do("POST", "/users", map[string]any{"email": "doomed@test.local", "fullName": "Doomed", "roleId": roleID, "username": "doomed", "password": password}, bearer(tok))
 	expect(t, r, 201)
 	doomedID := r.data()["id"].(string)
 
-	// The user can log in before removal.
+	// The user can log in before removal, which creates session rows.
 	e.loginMitra("MTR-DEL", "doomed")
+	var families int
+	must(t, e.pool.QueryRow(ctx, `SELECT count(*) FROM refresh_token_family WHERE user_id = $1`, doomedID).Scan(&families))
+	if families == 0 {
+		t.Fatal("expected a refresh family before delete")
+	}
 
-	expect(t, e.do("DELETE", "/users/"+doomedID, nil, bearer(tok)), 200)
+	expect(t, e.do("DELETE", "/users/"+doomedID, map[string]any{"confirmUsername": "doomed"}, bearer(tok)), 200)
 
+	// The row is really gone: the API 404s and a direct query finds nothing.
+	expect(t, e.do("GET", "/users/"+doomedID, nil, bearer(tok)), 404, "USER_NOT_FOUND")
+	var exists bool
+	must(t, e.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM "user" WHERE id = $1)`, doomedID).Scan(&exists))
+	if exists {
+		t.Fatal("user row still present after hard delete")
+	}
+	// Its sessions went with it (cascade).
+	must(t, e.pool.QueryRow(ctx, `SELECT count(*) FROM refresh_token_family WHERE user_id = $1`, doomedID).Scan(&families))
+	if families != 0 {
+		t.Fatalf("sessions survived the delete: %d", families)
+	}
+
+	// It can no longer log in.
 	expect(t, e.do("POST", "/auth/login-mitra", e.loginFields(map[string]string{"mitraKode": "MTR-DEL", "username": "doomed", "password": password})), 401, "INVALID_CREDENTIALS")
+
+	// The audit snapshot survives and records the target's username and email.
+	var snapshot string
+	must(t, e.pool.QueryRow(ctx, `SELECT after::text FROM audit_log WHERE action = 'user.delete' AND entity_id = $1`, doomedID).Scan(&snapshot))
+	if !strings.Contains(snapshot, "doomed") || !strings.Contains(snapshot, "doomed@test.local") {
+		t.Fatalf("audit snapshot missing identity: %s", snapshot)
+	}
+
+	// The username and email are immediately reusable; the new user can log in.
+	r = e.do("POST", "/users", map[string]any{"email": "doomed@test.local", "fullName": "Doomed Again", "roleId": roleID, "username": "doomed", "password": password}, bearer(tok))
+	expect(t, r, 201)
+	e.loginMitra("MTR-DEL", "doomed")
+}
+
+// TestHardDeleteRequiresCorrectConfirmation proves a wrong or missing
+// confirmUsername is refused with 400 and the user is left intact.
+func TestHardDeleteRequiresCorrectConfirmation(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+
+	mitra := e.seedMitra("MTR-CONF", "Mitra Confirm")
+	roleID := kernel.NewID()
+	must(t, e.q.CreateRole(ctx, store.CreateRoleParams{ID: roleID, Name: "MITRA_ADMIN"}))
+	perms := []policy.Permission{{Resource: "users", Action: "manage"}, {Resource: "users", Action: "view"}}
+	for _, p := range perms {
+		must(t, e.q.InsertRolePermission(ctx, store.InsertRolePermissionParams{ID: kernel.NewID(), RoleID: roleID, Resource: p.Resource, Action: p.Action, Scope: "mitra"}))
+	}
+	e.seedMitraUser("admin-conf@test.local", "admin-conf", mitra, "mitra", perms...)
+	tok, _ := e.loginMitra("MTR-CONF", "admin-conf")
+
+	r := e.do("POST", "/users", map[string]any{"email": "keep@test.local", "fullName": "Keep", "roleId": roleID, "username": "keepme", "password": password}, bearer(tok))
+	expect(t, r, 201)
+	id := r.data()["id"].(string)
+
+	// Missing field.
+	expect(t, e.do("DELETE", "/users/"+id, nil, bearer(tok)), 400, "DELETE_CONFIRMATION_MISMATCH")
+	// Wrong value.
+	expect(t, e.do("DELETE", "/users/"+id, map[string]any{"confirmUsername": "nope"}, bearer(tok)), 400, "DELETE_CONFIRMATION_MISMATCH")
+
+	// The user is untouched and can still log in.
+	expect(t, e.do("GET", "/users/"+id, nil, bearer(tok)), 200)
+	e.loginMitra("MTR-CONF", "keepme")
+}
+
+// TestDeleteSelfRejected proves an admin cannot delete their own account.
+func TestDeleteSelfRejected(t *testing.T) {
+	e := setup(t)
+	userID, _ := e.seedUser("self-del@test.local", all...)
+	tok, _ := e.login("self-del@test.local")
+
+	// The right confirmation word does not help: self-delete is always refused.
+	expect(t, e.do("DELETE", "/users/"+userID, map[string]any{"confirmUsername": "self-del@test.local"}, bearer(tok)), 403, "CANNOT_MODIFY_SELF")
+	expect(t, e.do("GET", "/users/"+userID, nil, bearer(tok)), 200)
+}
+
+// TestCreateMitraRoleRequiresMitra proves a MITRA_ADMIN (and MITRA_STAFF) user
+// needs a mitra at creation and when a role is changed into a mitra role.
+func TestCreateMitraRoleRequiresMitra(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+
+	e.seedUser("root-mitra@test.local", all...)
+	superTok, _ := e.login("root-mitra@test.local")
+	mitra := e.seedMitra("MTR-REQ", "Mitra Required")
+
+	mitraAdmin := kernel.NewID()
+	must(t, e.q.CreateRole(ctx, store.CreateRoleParams{ID: mitraAdmin, Name: "MITRA_ADMIN"}))
+	must(t, e.q.InsertRolePermission(ctx, store.InsertRolePermissionParams{ID: kernel.NewID(), RoleID: mitraAdmin, Resource: "users", Action: "view", Scope: "mitra"}))
+	plain := kernel.NewID()
+	must(t, e.q.CreateRole(ctx, store.CreateRoleParams{ID: plain, Name: "PLAIN_ROLE"}))
+
+	// Missing mitra on a mitra role: refused.
+	expect(t, e.do("POST", "/users", map[string]any{"email": "no-mitra@test.local", "fullName": "No Mitra", "roleId": mitraAdmin, "username": "no-mitra", "password": password}, bearer(superTok)), 400, "MITRA_REQUIRED")
+
+	// With a mitra: created, and its LoginMitra succeeds.
+	r := e.do("POST", "/users", map[string]any{"email": "with-mitra@test.local", "fullName": "With Mitra", "roleId": mitraAdmin, "mitraId": mitra, "username": "with-mitra", "password": password}, bearer(superTok))
+	expect(t, r, 201)
+	e.loginMitra("MTR-REQ", "with-mitra")
+
+	// A non-mitra role still needs no mitra.
+	expect(t, e.do("POST", "/users", map[string]any{"email": "plain@test.local", "fullName": "Plain", "roleId": plain, "password": password}, bearer(superTok)), 201)
+
+	// Changing an existing user's role into a mitra role without a mitra is
+	// refused.
+	plainUser := e.do("POST", "/users", map[string]any{"email": "to-mitra@test.local", "fullName": "To Mitra", "roleId": plain, "password": password}, bearer(superTok))
+	expect(t, plainUser, 201)
+	expect(t, e.do("PATCH", "/users/"+plainUser.data()["id"].(string), map[string]any{"roleId": mitraAdmin}, bearer(superTok)), 400, "MITRA_REQUIRED")
 }
 
 func TestRoleRequiredTwoFactorAndBackupCodes(t *testing.T) {
@@ -989,26 +1177,23 @@ func TestUserInvariantsAndAudit(t *testing.T) {
 
 	f := false
 	expect(t, e.do("PATCH", "/users/"+adminID, map[string]any{"isActive": &f}, bearer(admin)), 403, "CANNOT_MODIFY_SELF")
-	expect(t, e.do("DELETE", "/users/"+adminID, nil, bearer(admin)), 403, "CANNOT_MODIFY_SELF")
+	// Deleting yourself is refused even with the right confirmation word.
+	expect(t, e.do("DELETE", "/users/"+adminID, map[string]any{"confirmUsername": "admin@test.local"}, bearer(admin)), 403, "CANNOT_MODIFY_SELF")
 
-	r := e.do("DELETE", "/users/"+otherID, nil, bearer(admin))
+	// A permanent delete removes the row and revokes the user's sessions.
+	r := e.do("DELETE", "/users/"+otherID, map[string]any{"confirmUsername": "other@test.local"}, bearer(admin))
 	expect(t, r, 200)
-	if r.data()["deletedAt"] == nil || r.data()["isActive"] != false {
-		t.Fatalf("delete: %s", r.Raw)
-	}
 	expect(t, e.do("POST", "/auth/refresh", nil, cookie(otherRefresh)), 401, "INVALID_REFRESH_TOKEN")
+	expect(t, e.do("GET", "/users/"+otherID, nil, bearer(admin)), 404, "USER_NOT_FOUND")
 	if n := len(e.do("GET", "/users", nil, bearer(admin)).Body["data"].([]any)); n != 1 {
-		t.Fatalf("deleted users must be hidden, got %d", n)
+		t.Fatalf("deleted user must be gone from the list, got %d", n)
 	}
-	if n := len(e.do("GET", "/users?deleted=true", nil, bearer(admin)).Body["data"].([]any)); n != 1 {
-		t.Fatalf("deleted list got %d", n)
-	}
-	expect(t, e.do("POST", "/users/"+otherID+"/restore", nil, bearer(admin)), 201)
 
-	r = e.do("POST", "/users/bulk", map[string]any{"ids": []string{otherID, adminID}, "action": "deactivate"}, bearer(admin))
+	// The self user cannot be bulk-deleted either.
+	r = e.do("POST", "/users/bulk", map[string]any{"ids": []string{adminID}, "action": "delete"}, bearer(admin))
 	expect(t, r, 200)
-	if len(r.data()["succeeded"].([]any)) != 1 || len(r.data()["failed"].([]any)) != 1 {
-		t.Fatalf("bulk: %s", r.Raw)
+	if len(r.data()["succeeded"].([]any)) != 0 || len(r.data()["failed"].([]any)) != 1 {
+		t.Fatalf("bulk self delete should fail: %s", r.Raw)
 	}
 
 	// last holder of users.manage cannot lose it

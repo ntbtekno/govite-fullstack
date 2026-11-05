@@ -19,12 +19,32 @@ const (
 	cookiePath    = "/api/v1/auth"
 )
 
+// LoginAttempt is one line's worth of login metadata for the daily text log.
+// It intentionally carries no password, captcha, or token.
+type LoginAttempt struct {
+	Endpoint  string
+	MitraKode string
+	Login     string
+	Status    int
+	ErrCode   string
+	IP        string
+}
+
+// AttemptLogger records login attempts; a nil value is a no-op. It is an
+// interface so the handler stays decoupled from the log store.
+type AttemptLogger interface {
+	Record(LoginAttempt)
+}
+
 type Handler struct {
 	Svc *application.Service
 	// Grants resolves the caller's permissions for /auth/me.
 	Grants func(c *fiber.Ctx, roleID string) ([]rbac.Grant, error)
 	// AvatarURL turns a stored key into a public URL ("" when none).
 	AvatarURL func(key string) string
+	// LoginLog, when set, gets one line per login/login-mitra attempt. Logging
+	// is best-effort and never changes the login result.
+	LoginLog AttemptLogger
 }
 
 // Authenticate requires a valid Bearer access token and sets the Principal.
@@ -68,6 +88,26 @@ func readRefresh(c *fiber.Ctx) string {
 
 func client(c *fiber.Ctx) domain.Client {
 	return domain.Client{UserAgent: c.Get(fiber.HeaderUserAgent), IP: c.IP()}
+}
+
+// logAttempt writes one metadata line for a login attempt. A nil LoginLog or a
+// write failure is harmless: the login result is untouched.
+func (h Handler) logAttempt(c *fiber.Ctx, att LoginAttempt) {
+	if h.LoginLog == nil {
+		return
+	}
+	att.IP = c.IP()
+	h.LoginLog.Record(att)
+}
+
+// outcome fills status and error code from the value the handler returns.
+func outcome(att LoginAttempt, err error, okStatus int) LoginAttempt {
+	if err != nil {
+		att.Status, att.ErrCode = httpx.StatusOf(err), httpx.CodeOf(err)
+		return att
+	}
+	att.Status = okStatus
+	return att
 }
 
 type sessionResponse struct {
@@ -196,6 +236,7 @@ func (h Handler) Routes(r fiber.Router, loginLimit, refreshLimit, captchaLimit f
 
 	g.Post("/login", loginLimit, body(func(c *fiber.Ctx, b loginReq) error {
 		sess, ch, err := h.Svc.Login(c.UserContext(), b.Login, b.Password, b.CaptchaID, b.Captcha, client(c))
+		h.logAttempt(c, outcome(LoginAttempt{Endpoint: "/auth/login", Login: b.Login}, err, fiber.StatusCreated))
 		if err != nil {
 			return err
 		}
@@ -204,6 +245,7 @@ func (h Handler) Routes(r fiber.Router, loginLimit, refreshLimit, captchaLimit f
 
 	g.Post("/login-mitra", loginLimit, body(func(c *fiber.Ctx, b loginMitraReq) error {
 		sess, ch, err := h.Svc.LoginMitra(c.UserContext(), b.MitraKode, b.Username, b.Password, b.CaptchaID, b.Captcha, client(c))
+		h.logAttempt(c, outcome(LoginAttempt{Endpoint: "/auth/login-mitra", MitraKode: b.MitraKode, Login: b.Username}, err, fiber.StatusCreated))
 		if err != nil {
 			return err
 		}

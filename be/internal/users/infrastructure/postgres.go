@@ -80,6 +80,21 @@ func (r Repository) SetDeleted(ctx context.Context, id string, at *time.Time) er
 	return r.DB.Q(ctx).SetUserDeleted(ctx, store.SetUserDeletedParams{ID: id, DeletedAt: at})
 }
 
+// HardDelete removes the user row. Dependent rows whose foreign key is ON
+// DELETE CASCADE (sessions, tokens, 2FA, notifications, attachments, devices)
+// go with it; announcements are removed first by the caller.
+func (r Repository) HardDelete(ctx context.Context, id string) error {
+	_, err := r.DB.Q(ctx).DeleteUserRow(ctx, id)
+	return err
+}
+
+// DeleteAnnouncementsByAuthor removes every announcement authored by the user,
+// so the announcement_author_id_fkey RESTRICT does not block the user delete.
+func (r Repository) DeleteAnnouncementsByAuthor(ctx context.Context, id string) error {
+	_, err := r.DB.Q(ctx).DeleteAnnouncementsByAuthor(ctx, id)
+	return err
+}
+
 func (r Repository) SetPassword(ctx context.Context, id, hash string) error {
 	return r.DB.Q(ctx).SetPassword(ctx, store.SetPasswordParams{ID: id, PasswordHash: &hash})
 }

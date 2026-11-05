@@ -11,6 +11,7 @@ import type {
   BulkUserAction,
   BulkUserActionResult,
   CreateUserRequest,
+  DeleteUserRequest,
   ResetUserPasswordRequest,
   UpdateUserRequest,
   UserImportPreviewRow,
@@ -46,8 +47,11 @@ export const usersApi = {
     ),
   resendInvite: (id: string) =>
     authedRequest<void>(`/users/${id}/invite`, { method: "POST" }),
-  remove: (id: string) =>
-    authedRequest<UserResponse>(`/users/${id}`, { method: "DELETE" }),
+  remove: (id: string, body: DeleteUserRequest) =>
+    authedRequest<UserResponse, DeleteUserRequest>(`/users/${id}`, {
+      method: "DELETE",
+      body,
+    }),
   restore: (id: string) =>
     authedRequest<UserResponse>(`/users/${id}/restore`, { method: "POST" }),
   bulk: (body: BulkUserAction) =>

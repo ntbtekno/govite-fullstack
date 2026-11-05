@@ -1722,10 +1722,23 @@
             "JWT-auth": []
           }
         ],
-        "summary": "Soft-delete user and revoke sessions",
+        "summary": "Permanently delete user and revoke sessions",
         "tags": [
           "Users"
-        ]
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              },
+              "example": {
+                "confirmUsername": "jane-doe"
+              }
+            }
+          }
+        }
       },
       "parameters": [
         {
