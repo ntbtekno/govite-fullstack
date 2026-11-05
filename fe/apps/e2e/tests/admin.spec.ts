@@ -351,3 +351,58 @@ test("Superadmin has no report menus and is redirected from billing", async ({
 
   expect(problems).toEqual([])
 })
+
+// A hard refresh on a mitra-only report page must stay on that page: the
+// guard waits for the boot session probe before reading user/permissions.
+test("mitra report pages survive a hard refresh", async ({ page }) => {
+  const problems = watch(page)
+  await page.goto("/login-mitra")
+  await page.getByLabel("Kode Mitra").fill(mitraKode)
+  await page.getByLabel("Username atau Email").fill(mitraUsername)
+  await page.getByLabel("Password").fill(mitraPassword)
+  await page.getByRole("textbox", { name: "Captcha" }).fill(captcha)
+  await page.getByRole("button", { name: "Sign in" }).click()
+  await expect(page).toHaveURL(/\/admin\/dashboard/)
+
+  await page.getByRole("link", { name: "Billing Tagihan" }).click()
+  await expect(page).toHaveURL(/\/admin\/billing$/)
+  await page.reload()
+  await expect(page).toHaveURL(/\/admin\/billing$/)
+
+  await page.getByRole("link", { name: "History Payment" }).click()
+  await expect(page).toHaveURL(/\/admin\/payment-history$/)
+  await page.reload()
+  await expect(page).toHaveURL(/\/admin\/payment-history$/)
+
+  expect(problems).toEqual([])
+})
+
+// With the session gone, the guard must pick the login form matching the kind
+// of session that expired.
+test("expired mitra session lands on /login-mitra", async ({ page }) => {
+  const problems = watch(page)
+  await page.goto("/login-mitra")
+  await page.getByLabel("Kode Mitra").fill(mitraKode)
+  await page.getByLabel("Username atau Email").fill(mitraUsername)
+  await page.getByLabel("Password").fill(mitraPassword)
+  await page.getByRole("textbox", { name: "Captcha" }).fill(captcha)
+  await page.getByRole("button", { name: "Sign in" }).click()
+  await expect(page).toHaveURL(/\/admin\/dashboard/)
+
+  await page.context().clearCookies()
+  await page.reload()
+  await expect(page).toHaveURL(/\/login-mitra(\?|$)/)
+
+  expect(problems).toEqual([])
+})
+
+test("expired Superadmin session lands on /login", async ({ page }) => {
+  const problems = watch(page)
+  await signIn(page)
+
+  await page.context().clearCookies()
+  await page.reload()
+  await expect(page).toHaveURL(/\/login(\?|$)/)
+
+  expect(problems).toEqual([])
+})

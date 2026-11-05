@@ -24,12 +24,22 @@ import { TooltipProvider } from "@app/ui/components/tooltip"
 import { AppSidebar } from "@/features/shell/app-sidebar"
 import { NotificationBell } from "@/features/shell/notification-bell"
 import { useTheme } from "@/components/theme-provider"
-import { settledStatus } from "@/lib/auth-context"
+import { settledAuth } from "@/lib/auth-context"
+import { lastAuthKind, loginPathForSession } from "@/lib/session-kind"
 
 export const Route = createFileRoute("/admin")({
   beforeLoad: async ({ context, location }) => {
-    if ((await settledStatus(context.auth)) !== "authenticated") {
-      throw redirect({ to: "/login", search: { redirect: location.href } })
+    const settled = await settledAuth(context.auth)
+    if (settled.status !== "authenticated") {
+      // The session is already gone, so user.mitraId may be cleared. Use the
+      // remembered (non-credential) session kind to pick the right login.
+      throw redirect({
+        to: loginPathForSession({
+          mitraId: settled.user?.mitraId,
+          remembered: lastAuthKind(),
+        }),
+        search: { redirect: location.href },
+      })
     }
   },
   component: AdminLayout,

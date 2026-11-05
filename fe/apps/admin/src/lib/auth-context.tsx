@@ -13,6 +13,7 @@ import * as authApi from "./auth-api"
 import { queryClient } from "./query-client"
 import { refreshSession } from "./refresh-session"
 import { setOnSessionExpired } from "./authed-request"
+import { rememberAuthKind } from "./session-kind"
 import { getAccessToken, setAccessToken } from "./token-store"
 
 type SettledStatus = "authenticated" | "anonymous"
@@ -23,8 +24,16 @@ interface AuthState {
   user: MeResponse | null
 }
 
+/** Result of the boot session probe: status plus the restored user. */
+export interface SettledAuth {
+  status: SettledStatus
+  user: MeResponse | null
+}
+
 export interface AuthContextValue extends AuthState {
   ready: Promise<SettledStatus>
+  /** The same boot probe, resolved with the restored user as well. */
+  readyAuth: Promise<SettledAuth>
   login: (
     login: string,
     password: string,
@@ -62,15 +71,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     user: null,
   })
 
-  const [ready] = useState<{
-    promise: Promise<SettledStatus>
-    resolve: (status: SettledStatus) => void
+  const [boot] = useState<{
+    status: Promise<SettledStatus>
+    auth: Promise<SettledAuth>
+    settle: (settled: SettledAuth) => void
   }>(() => {
-    let resolve!: (status: SettledStatus) => void
-    const promise = new Promise<SettledStatus>((res) => {
-      resolve = res
+    let resolveStatus!: (status: SettledStatus) => void
+    let resolveAuth!: (settled: SettledAuth) => void
+    const status = new Promise<SettledStatus>((res) => {
+      resolveStatus = res
     })
-    return { promise, resolve }
+    const auth = new Promise<SettledAuth>((res) => {
+      resolveAuth = res
+    })
+    return {
+      status,
+      auth,
+      settle: (settled) => {
+        resolveStatus(settled.status)
+        resolveAuth(settled)
+      },
+    }
   })
 
   useEffect(() => {
@@ -78,18 +99,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     refreshSession().then((session) => {
       if (session) {
         setAccessToken(session.accessToken)
+        rememberAuthKind(session.user.mitraId)
         if (!cancelled)
           setState({ status: "authenticated", user: session.user })
-        ready.resolve("authenticated")
+        boot.settle({ status: "authenticated", user: session.user })
       } else {
         if (!cancelled) setState({ status: "anonymous", user: null })
-        ready.resolve("anonymous")
+        boot.settle({ status: "anonymous", user: null })
       }
     })
     return () => {
       cancelled = true
     }
-  }, [ready])
+  }, [boot])
 
   useEffect(() => {
     setOnSessionExpired(() => {
@@ -106,6 +128,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Drop anything cached for a previous session before the new user renders.
     queryClient.clear()
     const user = await authApi.getMe(result.accessToken)
+    rememberAuthKind(user.mitraId)
     // Synchronous so the router's context is updated before a caller's
     // post-login navigate() runs - otherwise beforeLoad reads the stale
     // pre-login snapshot and bounces straight back to /login.
@@ -198,7 +221,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value = useMemo<AuthContextValue>(
     () => ({
       ...state,
-      ready: ready.promise,
+      ready: boot.status,
+      readyAuth: boot.auth,
       login,
       loginMitra,
       verifyTwoFactor,
@@ -218,7 +242,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       refreshUser,
       can,
       scopeOf,
-      ready.promise,
+      boot.status,
+      boot.auth,
     ]
   )
 
@@ -229,6 +254,33 @@ export function settledStatus(
   auth: Pick<AuthContextValue, "status" | "ready">
 ): Promise<SettledStatus> | SettledStatus {
   return auth.status === "loading" ? auth.ready : auth.status
+}
+
+/**
+ * Like settledStatus, but also returns the restored user. Guards that read
+ * user fields (mitraId, permissions) must use this: awaiting `ready` resolves
+ * before React commits the restored state, so the router context still holds
+ * the pre-refresh snapshot during a hard refresh.
+ */
+export function settledAuth(
+  auth: Pick<AuthContextValue, "status" | "user" | "readyAuth">
+): Promise<SettledAuth> | SettledAuth {
+  return auth.status === "loading"
+    ? auth.readyAuth
+    : { status: auth.status, user: auth.user }
+}
+
+/** Permission check against a settled user (not the possibly stale context). */
+export function canUser(
+  user: MeResponse | null,
+  resource: string,
+  action: string
+): boolean {
+  return (
+    user?.permissions.some(
+      (p) => p.resource === resource && p.action === action
+    ) ?? false
+  )
 }
 
 export function useAuth(): AuthContextValue {
