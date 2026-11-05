@@ -9,7 +9,7 @@ import (
 
 var Scopes = []string{"self", "team", "mitra", "all"}
 
-var Actions = []string{"manage", "view", "create", "edit", "delete"}
+var Actions = []string{"manage", "view", "create", "edit", "delete", "export"}
 
 var Resources = []string{
 	"users",
@@ -21,6 +21,8 @@ var Resources = []string{
 	"webhooks",
 	"apiKeys",
 	"mitra",
+	"billing",
+	"payments",
 }
 
 type Permission struct {
@@ -44,6 +46,36 @@ var Permissions = []Permission{
 	{"apiKeys", "manage"},
 	{"mitra", "manage"},
 	{"mitra", "view"},
+	// Mitra-only reporting menus (Billing Tagihan, History Payment). A
+	// Superadmin is never granted these by the seed; it can still hand them to
+	// a role through role management.
+	{"billing", "view"},
+	{"billing", "export"},
+	{"payments", "view"},
+	{"payments", "export"},
+}
+
+// MitraReportPermissions are the reporting grants the seed gives to the mitra
+// roles. They are deliberately excluded from the Superadmin default grants:
+// the menus are mitra-only.
+var MitraReportPermissions = []Permission{
+	{"billing", "view"},
+	{"billing", "export"},
+	{"payments", "view"},
+	{"payments", "export"},
+}
+
+// SuperAdminPermissions is every known permission except the mitra-only report
+// ones.
+func SuperAdminPermissions() []Permission {
+	out := make([]Permission, 0, len(Permissions))
+	for _, p := range Permissions {
+		if p.Resource == "billing" || p.Resource == "payments" {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 func IsKnown(resource, action string) bool {

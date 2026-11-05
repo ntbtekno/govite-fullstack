@@ -2,7 +2,14 @@ import { useState, type FormEvent } from "react"
 import { Link, useNavigate, useParams } from "@tanstack/react-router"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import type { RolePermission, Scope } from "@app/contracts"
+import {
+  PERMISSION_CATEGORIES,
+  PERMISSION_CATEGORY_LABELS,
+  permissionCatalogEntry,
+  type PermissionCategory,
+  type RolePermission,
+  type Scope,
+} from "@app/contracts"
 import { Button } from "@app/ui/components/button"
 import { Checkbox } from "@app/ui/components/checkbox"
 import { Input } from "@app/ui/components/input"
@@ -50,10 +57,12 @@ export function RoleDetailPage() {
     !!role.data && signature(role.data.permissions) !== signature(draft)
   const grouped = catalog.data?.permissions.reduce(
     (acc, p) => {
-      ;(acc[p.resource] ??= []).push(p)
+      const key = `${p.resource}.${p.action}`
+      const category = permissionCatalogEntry(key).category
+      ;(acc[category] ??= []).push(p)
       return acc
     },
-    {} as Record<string, typeof catalog.data.permissions>
+    {} as Record<PermissionCategory, typeof catalog.data.permissions>
   )
 
   const invalidate = async () => {
@@ -237,15 +246,17 @@ export function RoleDetailPage() {
               }
             >
               <div className="grid gap-4">
-                {Object.entries(grouped ?? {}).map(
-                  ([resource, permissions]) => (
-                    <div key={resource} className="rounded-xl border p-3">
+                {PERMISSION_CATEGORIES.map((category) => {
+                  const permissions = grouped?.[category] ?? []
+                  if (permissions.length === 0) return null
+                  return (
+                    <div key={category} className="rounded-xl border p-3">
                       <div className="mb-3 flex items-center justify-between">
-                        <h3 className="font-mono text-sm font-semibold">
-                          {resource}
+                        <h3 className="text-sm font-semibold">
+                          {PERMISSION_CATEGORY_LABELS[category]}
                         </h3>
                         <span className="text-xs text-muted-foreground">
-                          {permissions.length} actions
+                          {permissions.length} permissions
                         </span>
                       </div>
                       <div className="grid gap-3">
@@ -259,7 +270,7 @@ export function RoleDetailPage() {
                               key={key}
                               className="flex items-center justify-between gap-3 rounded-lg bg-muted/30 p-2"
                             >
-                              <Label className="flex items-center gap-2 font-mono text-sm">
+                              <Label className="flex items-center gap-2 text-sm">
                                 <Checkbox
                                   checked={selectedKeys.has(key)}
                                   disabled={role.data.isSystem}
@@ -270,7 +281,10 @@ export function RoleDetailPage() {
                                     )
                                   }
                                 />
-                                {p.action}
+                                <span>{permissionCatalogEntry(key).label}</span>
+                                <span className="font-mono text-[11px] text-muted-foreground">
+                                  {key}
+                                </span>
                               </Label>
                               <Select
                                 value={existing?.scope ?? "all"}
@@ -306,7 +320,7 @@ export function RoleDetailPage() {
                       </div>
                     </div>
                   )
-                )}
+                })}
               </div>
             </DetailSection>
           </DetailGrid>

@@ -1,10 +1,12 @@
 import { Link } from "@tanstack/react-router"
 import {
+  HistoryIcon,
   KeyRoundIcon,
   LayoutDashboardIcon,
   MegaphoneIcon,
   ActivityIcon,
   BuildingIcon,
+  ReceiptIcon,
   ScrollTextIcon,
   SettingsIcon,
   ShieldIcon,
@@ -100,6 +102,23 @@ const administration: Guarded[] = [
   },
 ]
 
+// Mitra-only reporting menus. The group is rendered only for a mitra session,
+// so a Superadmin never sees it even if it holds the permission.
+const reports: Guarded[] = [
+  {
+    title: "Billing Tagihan",
+    url: "/admin/billing",
+    icon: <ReceiptIcon />,
+    permission: ["billing", "view"],
+  },
+  {
+    title: "History Payment",
+    url: "/admin/payment-history",
+    icon: <HistoryIcon />,
+    permission: ["payments", "view"],
+  },
+]
+
 export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
   const { can, user } = useAuth()
   const settings = usePublicSettings()
@@ -116,6 +135,8 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
   const adminItems = visible(administration).map((i) =>
     i.title === "Users" ? { ...i, url: usersUrl } : i
   )
+  // The reporting group exists only for a mitra session.
+  const reportItems = user?.mitraId ? visible(reports) : []
 
   return (
     <Sidebar variant="inset" {...props}>
@@ -146,6 +167,9 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
       </SidebarHeader>
       <SidebarContent>
         <NavMain label="Overview" items={visible(overview)} />
+        {reportItems.length > 0 && (
+          <NavMain label="Laporan" items={reportItems} />
+        )}
         {adminItems.length > 0 && (
           <NavMain label="Administration" items={adminItems} />
         )}

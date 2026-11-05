@@ -18,8 +18,10 @@ import { Route as LoginMitraRouteImport } from './routes/login-mitra'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as VerifyEmailRouteImport } from './routes/verify-email'
 import { Route as AdminAccountRouteImport } from './routes/admin.account'
+import { Route as AdminBillingRouteImport } from './routes/admin.billing'
 import { Route as AdminDashboardRouteImport } from './routes/admin.dashboard'
 import { Route as AdminNotificationsRouteImport } from './routes/admin.notifications'
+import { Route as AdminPaymentHistoryRouteImport } from './routes/admin.payment-history'
 import { Route as AdminAdministrationAnnouncementsRouteImport } from './routes/admin.administration.announcements'
 import { Route as AdminAdministrationApiKeysRouteImport } from './routes/admin.administration.api-keys'
 import { Route as AdminAdministrationAuditRouteImport } from './routes/admin.administration.audit'
@@ -78,6 +80,11 @@ const AdminAccountRoute = AdminAccountRouteImport.update({
   path: '/account',
   getParentRoute: () => AdminRoute,
 } as any)
+const AdminBillingRoute = AdminBillingRouteImport.update({
+  id: '/billing',
+  path: '/billing',
+  getParentRoute: () => AdminRoute,
+} as any)
 const AdminDashboardRoute = AdminDashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
@@ -86,6 +93,11 @@ const AdminDashboardRoute = AdminDashboardRouteImport.update({
 const AdminNotificationsRoute = AdminNotificationsRouteImport.update({
   id: '/notifications',
   path: '/notifications',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminPaymentHistoryRoute = AdminPaymentHistoryRouteImport.update({
+  id: '/payment-history',
+  path: '/payment-history',
   getParentRoute: () => AdminRoute,
 } as any)
 const AdminAdministrationAnnouncementsRoute =
@@ -171,8 +183,10 @@ export interface FileRoutesByFullPath {
   '/reset-password': typeof ResetPasswordRoute
   '/verify-email': typeof VerifyEmailRoute
   '/admin/account': typeof AdminAccountRoute
+  '/admin/billing': typeof AdminBillingRoute
   '/admin/dashboard': typeof AdminDashboardRoute
   '/admin/notifications': typeof AdminNotificationsRoute
+  '/admin/payment-history': typeof AdminPaymentHistoryRoute
   '/admin/administration/announcements': typeof AdminAdministrationAnnouncementsRoute
   '/admin/administration/api-keys': typeof AdminAdministrationApiKeysRoute
   '/admin/administration/audit': typeof AdminAdministrationAuditRoute
@@ -196,8 +210,10 @@ export interface FileRoutesByTo {
   '/reset-password': typeof ResetPasswordRoute
   '/verify-email': typeof VerifyEmailRoute
   '/admin/account': typeof AdminAccountRoute
+  '/admin/billing': typeof AdminBillingRoute
   '/admin/dashboard': typeof AdminDashboardRoute
   '/admin/notifications': typeof AdminNotificationsRoute
+  '/admin/payment-history': typeof AdminPaymentHistoryRoute
   '/admin/administration/announcements': typeof AdminAdministrationAnnouncementsRoute
   '/admin/administration/api-keys': typeof AdminAdministrationApiKeysRoute
   '/admin/administration/audit': typeof AdminAdministrationAuditRoute
@@ -222,8 +238,10 @@ export interface FileRoutesById {
   '/reset-password': typeof ResetPasswordRoute
   '/verify-email': typeof VerifyEmailRoute
   '/admin/account': typeof AdminAccountRoute
+  '/admin/billing': typeof AdminBillingRoute
   '/admin/dashboard': typeof AdminDashboardRoute
   '/admin/notifications': typeof AdminNotificationsRoute
+  '/admin/payment-history': typeof AdminPaymentHistoryRoute
   '/admin/administration/announcements': typeof AdminAdministrationAnnouncementsRoute
   '/admin/administration/api-keys': typeof AdminAdministrationApiKeysRoute
   '/admin/administration/audit': typeof AdminAdministrationAuditRoute
@@ -249,8 +267,10 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/verify-email'
     | '/admin/account'
+    | '/admin/billing'
     | '/admin/dashboard'
     | '/admin/notifications'
+    | '/admin/payment-history'
     | '/admin/administration/announcements'
     | '/admin/administration/api-keys'
     | '/admin/administration/audit'
@@ -274,8 +294,10 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/verify-email'
     | '/admin/account'
+    | '/admin/billing'
     | '/admin/dashboard'
     | '/admin/notifications'
+    | '/admin/payment-history'
     | '/admin/administration/announcements'
     | '/admin/administration/api-keys'
     | '/admin/administration/audit'
@@ -299,8 +321,10 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/verify-email'
     | '/admin/account'
+    | '/admin/billing'
     | '/admin/dashboard'
     | '/admin/notifications'
+    | '/admin/payment-history'
     | '/admin/administration/announcements'
     | '/admin/administration/api-keys'
     | '/admin/administration/audit'
@@ -391,6 +415,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminAccountRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/admin/billing': {
+      id: '/admin/billing'
+      path: '/billing'
+      fullPath: '/admin/billing'
+      preLoaderRoute: typeof AdminBillingRouteImport
+      parentRoute: typeof AdminRoute
+    }
     '/admin/dashboard': {
       id: '/admin/dashboard'
       path: '/dashboard'
@@ -403,6 +434,13 @@ declare module '@tanstack/react-router' {
       path: '/notifications'
       fullPath: '/admin/notifications'
       preLoaderRoute: typeof AdminNotificationsRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/payment-history': {
+      id: '/admin/payment-history'
+      path: '/payment-history'
+      fullPath: '/admin/payment-history'
+      preLoaderRoute: typeof AdminPaymentHistoryRouteImport
       parentRoute: typeof AdminRoute
     }
     '/admin/administration/announcements': {
@@ -494,8 +532,10 @@ declare module '@tanstack/react-router' {
 
 interface AdminRouteChildren {
   AdminAccountRoute: typeof AdminAccountRoute
+  AdminBillingRoute: typeof AdminBillingRoute
   AdminDashboardRoute: typeof AdminDashboardRoute
   AdminNotificationsRoute: typeof AdminNotificationsRoute
+  AdminPaymentHistoryRoute: typeof AdminPaymentHistoryRoute
   AdminAdministrationAnnouncementsRoute: typeof AdminAdministrationAnnouncementsRoute
   AdminAdministrationApiKeysRoute: typeof AdminAdministrationApiKeysRoute
   AdminAdministrationAuditRoute: typeof AdminAdministrationAuditRoute
@@ -512,8 +552,10 @@ interface AdminRouteChildren {
 
 const AdminRouteChildren: AdminRouteChildren = {
   AdminAccountRoute: AdminAccountRoute,
+  AdminBillingRoute: AdminBillingRoute,
   AdminDashboardRoute: AdminDashboardRoute,
   AdminNotificationsRoute: AdminNotificationsRoute,
+  AdminPaymentHistoryRoute: AdminPaymentHistoryRoute,
   AdminAdministrationAnnouncementsRoute: AdminAdministrationAnnouncementsRoute,
   AdminAdministrationApiKeysRoute: AdminAdministrationApiKeysRoute,
   AdminAdministrationAuditRoute: AdminAdministrationAuditRoute,

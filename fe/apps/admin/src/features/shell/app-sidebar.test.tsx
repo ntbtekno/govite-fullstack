@@ -6,11 +6,13 @@ import { TooltipProvider } from "@app/ui/components/tooltip"
 
 const state = vi.hoisted(() => ({
   user: null as { id: string; mitraId: string | null } | null,
+  granted: new Set<string>(),
 }))
 
 vi.mock("@/lib/auth-context", () => ({
   useAuth: () => ({
-    can: () => true,
+    can: (resource: string, action: string) =>
+      state.granted.has(`${resource}.${action}`),
     user: state.user,
   }),
 }))
@@ -37,6 +39,11 @@ const usersLink = () =>
     a.textContent?.includes("Users")
   )
 
+const reportLink = (title: string) =>
+  Array.from(document.querySelectorAll("a")).find((a) =>
+    a.textContent?.includes(title)
+  )
+
 const renderSidebar = () =>
   render(
     <TooltipProvider>
@@ -48,6 +55,7 @@ const renderSidebar = () =>
 
 afterEach(() => {
   state.user = null
+  state.granted = new Set()
   document.body.replaceChildren()
 })
 
@@ -57,6 +65,7 @@ describe("AppSidebar Users menu", () => {
       id: "22222222-2222-4222-8222-222222222222",
       mitraId: "33333333-3333-4333-8333-333333333333",
     }
+    state.granted = new Set(["users.view"])
     await renderSidebar()
 
     expect(usersLink()?.getAttribute("data-to")).toBe(
@@ -69,10 +78,68 @@ describe("AppSidebar Users menu", () => {
       id: "22222222-2222-4222-8222-222222222222",
       mitraId: null,
     }
+    state.granted = new Set(["users.view"])
     await renderSidebar()
 
     expect(usersLink()?.getAttribute("data-to")).toBe(
       "/admin/administration/users"
     )
+  })
+})
+
+describe("AppSidebar Laporan group", () => {
+  it("is hidden for a Superadmin even with both report permissions", async () => {
+    state.user = {
+      id: "22222222-2222-4222-8222-222222222222",
+      mitraId: null,
+    }
+    state.granted = new Set(["billing.view", "payments.view"])
+    await renderSidebar()
+
+    expect(reportLink("Billing Tagihan")).toBeUndefined()
+    expect(reportLink("History Payment")).toBeUndefined()
+    expect(document.body.textContent).not.toContain("Laporan")
+  })
+
+  it("shows both items for a mitra with both view permissions", async () => {
+    state.user = {
+      id: "22222222-2222-4222-8222-222222222222",
+      mitraId: "33333333-3333-4333-8333-333333333333",
+    }
+    state.granted = new Set(["billing.view", "payments.view"])
+    await renderSidebar()
+
+    expect(document.body.textContent).toContain("Laporan")
+    expect(reportLink("Billing Tagihan")?.getAttribute("data-to")).toBe(
+      "/admin/billing"
+    )
+    expect(reportLink("History Payment")?.getAttribute("data-to")).toBe(
+      "/admin/payment-history"
+    )
+  })
+
+  it("shows only Billing for a mitra with billing.view only", async () => {
+    state.user = {
+      id: "22222222-2222-4222-8222-222222222222",
+      mitraId: "33333333-3333-4333-8333-333333333333",
+    }
+    state.granted = new Set(["billing.view"])
+    await renderSidebar()
+
+    expect(reportLink("Billing Tagihan")).toBeDefined()
+    expect(reportLink("History Payment")).toBeUndefined()
+  })
+
+  it("hides the whole group for a mitra without either view permission", async () => {
+    state.user = {
+      id: "22222222-2222-4222-8222-222222222222",
+      mitraId: "33333333-3333-4333-8333-333333333333",
+    }
+    state.granted = new Set()
+    await renderSidebar()
+
+    expect(reportLink("Billing Tagihan")).toBeUndefined()
+    expect(reportLink("History Payment")).toBeUndefined()
+    expect(document.body.textContent).not.toContain("Laporan")
   })
 })

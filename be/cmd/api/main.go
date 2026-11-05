@@ -199,7 +199,9 @@ func seed(ctx context.Context, cfg config.Config, q *store.Queries) error {
 	if err := q.UpsertSystemRole(ctx, store.UpsertSystemRoleParams{ID: MitraStaffRoleID, Name: "MITRA_STAFF", Description: &mitraStaffDesc}); err != nil {
 		return err
 	}
-	for _, p := range policy.Permissions {
+	// The report menus are mitra-only, so the Superadmin default grants skip
+	// them; a Superadmin can still assign them through role management.
+	for _, p := range policy.SuperAdminPermissions() {
 		if err := q.UpsertRolePermission(ctx, store.UpsertRolePermissionParams{ID: kernel.NewID(), RoleID: SuperAdminRoleID, Resource: p.Resource, Action: p.Action, Scope: "all"}); err != nil {
 			return err
 		}
@@ -212,6 +214,17 @@ func seed(ctx context.Context, cfg config.Config, q *store.Queries) error {
 	}
 	if err := q.UpsertRolePermission(ctx, store.UpsertRolePermissionParams{ID: kernel.NewID(), RoleID: MitraStaffRoleID, Resource: "users", Action: "view", Scope: "mitra"}); err != nil {
 		return err
+	}
+	// MITRA_ADMIN gets the full reporting set, MITRA_STAFF only the view grants.
+	for _, p := range policy.MitraReportPermissions {
+		if err := q.UpsertRolePermission(ctx, store.UpsertRolePermissionParams{ID: kernel.NewID(), RoleID: MitraAdminRoleID, Resource: p.Resource, Action: p.Action, Scope: "mitra"}); err != nil {
+			return err
+		}
+		if p.Action == "view" {
+			if err := q.UpsertRolePermission(ctx, store.UpsertRolePermissionParams{ID: kernel.NewID(), RoleID: MitraStaffRoleID, Resource: p.Resource, Action: p.Action, Scope: "mitra"}); err != nil {
+				return err
+			}
+		}
 	}
 	if cfg.SuperAdminEmail == "" || cfg.SuperAdminPassword == "" {
 		return fmt.Errorf("SUPER_ADMIN_EMAIL and SUPER_ADMIN_PASSWORD are required")

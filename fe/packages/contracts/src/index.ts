@@ -1,4 +1,5 @@
 export * from "./permissions"
+export * from "./permission-catalog"
 export * from "./security"
 export * from "./notification"
 export * from "./attachment"
