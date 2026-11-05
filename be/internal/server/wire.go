@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"database/sql"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -42,6 +43,9 @@ import (
 	"govite/internal/platform/storage"
 	"govite/internal/rbac"
 	rbacdomain "govite/internal/rbac/domain"
+	reportsapp "govite/internal/reports/application"
+	reportsinfra "govite/internal/reports/infrastructure"
+	reportshttp "govite/internal/reports/interface/http"
 	rolesapp "govite/internal/roles/application"
 	rolesinfra "govite/internal/roles/infrastructure"
 	roleshttp "govite/internal/roles/interface/http"
@@ -64,6 +68,9 @@ type Deps struct {
 	Mail  mail.Sender
 	Files *storage.Store // nil when object storage is not configured
 	Push  fcm.Pusher     // nil when Firebase is not configured
+	// ReportsDB is the read-only MySQL reporting database; nil when
+	// REPORTS_MYSQL_DSN is unset (the report endpoints then answer 503).
+	ReportsDB *sql.DB
 	// CaptchaStore overrides where captcha challenges are kept. Tests inject a
 	// store they can read back; production leaves it nil for Redis/in-memory.
 	CaptchaStore authdomain.CaptchaStore
@@ -131,6 +138,7 @@ type handlers struct {
 	integrations  inthttp.Handler
 	system        syshttp.Handler
 	mitra         mitrahttp.Handler
+	reports       reportshttp.Handler
 }
 
 // captchaStoreOr picks an override, else Redis when configured, else the
@@ -184,6 +192,11 @@ func wire(d Deps) (handlers, *sysapp.Service) {
 
 	mitra := &mitraapp.Service{Repo: mitrainfra.Repository{DB: db}, Tx: db}
 
+	reports := &reportsapp.Service{
+		Repo:  reportsinfra.NewRepository(d.ReportsDB),
+		Mitra: reportsinfra.MitraResolver{DB: db},
+	}
+
 	var redisPing func(context.Context) error
 	if d.Redis != nil {
 		redisPing = func(ctx context.Context) error { return d.Redis.Ping(ctx).Err() }
@@ -218,6 +231,7 @@ func wire(d Deps) (handlers, *sysapp.Service) {
 		system: syshttp.Handler{Svc: system, Pool: d.Pool, Env: d.Cfg.Env, Integrations: syshttp.Integrations{
 			Storage: d.Files.Enabled(), Push: d.Push != nil, Payment: integrations.PaymentEnabled(), Mailer: d.Cfg.SMTPHost != "",
 		}},
-		mitra: mitrahttp.Handler{Svc: mitra, Audit: auditor},
+		mitra:   mitrahttp.Handler{Svc: mitra, Audit: auditor},
+		reports: reportshttp.Handler{Svc: reports},
 	}, system
 }

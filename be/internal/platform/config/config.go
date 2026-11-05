@@ -11,12 +11,15 @@ import (
 )
 
 type Config struct {
-	Env                  string
-	Port                 int
-	WebURL               string
-	CORSOrigins          []string
-	DatabaseURL          string
-	RedisURL             string
+	Env         string
+	Port        int
+	WebURL      string
+	CORSOrigins []string
+	DatabaseURL string
+	RedisURL    string
+	// ReportsMySQLDSN points at the external read-only reporting database.
+	// Empty disables the /reports endpoints (503).
+	ReportsMySQLDSN      string
 	JWTSecret            string
 	RefreshPepper        string
 	SMTPHost             string
@@ -112,6 +115,7 @@ func Load() (Config, error) {
 		WebURL:                     strings.TrimRight(str("WEB_URL", "http://localhost:5173"), "/"),
 		DatabaseURL:                required("DATABASE_URL"),
 		RedisURL:                   str("REDIS_URL", ""),
+		ReportsMySQLDSN:            str("REPORTS_MYSQL_DSN", ""),
 		JWTSecret:                  required("JWT_ACCESS_SECRET"),
 		RefreshPepper:              required("REFRESH_TOKEN_PEPPER"),
 		SMTPHost:                   str("SMTP_HOST", ""),

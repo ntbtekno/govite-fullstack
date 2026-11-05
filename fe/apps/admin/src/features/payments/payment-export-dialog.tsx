@@ -1,5 +1,7 @@
 import { useState } from "react"
+import { useQuery } from "@tanstack/react-query"
 import { DownloadIcon } from "lucide-react"
+import { toast } from "sonner"
 import { Button } from "@app/ui/components/button"
 import {
   Dialog,
@@ -13,18 +15,15 @@ import {
 } from "@app/ui/components/dialog"
 import { Input } from "@app/ui/components/input"
 import { Label } from "@app/ui/components/label"
+import { reportsApi } from "@/lib/reports-api"
 import {
   downloadPaymentExcel,
-  filterByRange,
+  fetchAllPaymentRows,
   getDefaultPaymentDateRange,
+  MAX_EXPORT_ROWS,
 } from "./export"
-import type { PaymentRow } from "./mock"
 
-export function PaymentExportDialog({
-  filteredRows,
-}: {
-  filteredRows: PaymentRow[]
-}) {
+export function PaymentExportDialog({ currentQ }: { currentQ?: string }) {
   const [open, setOpen] = useState(false)
   const defaultRange = getDefaultPaymentDateRange()
   const [startDate, setStartDate] = useState(defaultRange.startDate)
@@ -32,10 +31,30 @@ export function PaymentExportDialog({
   const [isExporting, setIsExporting] = useState(false)
 
   const isInvalidRange = endDate < startDate
-  const exportRows = isInvalidRange
-    ? []
-    : filterByRange(filteredRows, startDate, endDate)
-  const hasNoData = !isInvalidRange && exportRows.length === 0
+
+  // Query live total for page 1 based on currently selected dates & search query
+  const countQuery = useQuery({
+    queryKey: [
+      "reports",
+      "payments",
+      "export-count",
+      { q: currentQ, from: startDate, to: endDate },
+    ],
+    queryFn: () =>
+      reportsApi.payments({
+        q: currentQ || undefined,
+        from: startDate,
+        to: endDate,
+        page: 1,
+        pageSize: 1,
+      }),
+    enabled: open && !isInvalidRange,
+  })
+
+  const exportTotal = countQuery.data?.total ?? 0
+  const hasNoData =
+    !isInvalidRange && !countQuery.isPending && !countQuery.isError && exportTotal === 0
+  const isOverLimit = exportTotal > MAX_EXPORT_ROWS
 
   const handleOpen = (nextOpen: boolean) => {
     if (nextOpen) {
@@ -47,11 +66,20 @@ export function PaymentExportDialog({
   }
 
   const handleDownload = async () => {
-    if (isInvalidRange || hasNoData || isExporting) return
+    if (isInvalidRange || hasNoData || isOverLimit || isExporting) return
     try {
       setIsExporting(true)
-      await downloadPaymentExcel(exportRows, startDate, endDate)
+      const allRows = await fetchAllPaymentRows({
+        q: currentQ || undefined,
+        from: startDate,
+        to: endDate,
+      })
+      await downloadPaymentExcel(allRows, startDate, endDate)
       setOpen(false)
+    } catch (err) {
+      toast.error("Export Gagal", {
+        description: err instanceof Error ? err.message : "Terjadi kesalahan",
+      })
     } finally {
       setIsExporting(false)
     }
@@ -102,7 +130,13 @@ export function PaymentExportDialog({
             <p className="mt-1">
               Jumlah baris yang akan diekspor:{" "}
               <strong className="text-foreground">
-                {isInvalidRange ? 0 : exportRows.length}
+                {isInvalidRange
+                  ? 0
+                  : countQuery.isPending
+                    ? "Menghitung..."
+                    : countQuery.isError
+                      ? "-"
+                      : exportTotal.toLocaleString("id-ID")}
               </strong>{" "}
               baris
             </p>
@@ -119,6 +153,14 @@ export function PaymentExportDialog({
               Tidak ada data pada range ini
             </p>
           )}
+
+          {isOverLimit && (
+            <p className="text-xs font-medium text-destructive">
+              Jumlah data ({exportTotal.toLocaleString("id-ID")}) melebihi batas
+              maksimum ekspor ({MAX_EXPORT_ROWS.toLocaleString("id-ID")} baris).
+              Mohon persempit rentang tanggal.
+            </p>
+          )}
         </div>
 
         <DialogFooter>
@@ -129,7 +171,13 @@ export function PaymentExportDialog({
           </DialogClose>
           <Button
             type="button"
-            disabled={isInvalidRange || hasNoData || isExporting}
+            disabled={
+              isInvalidRange ||
+              hasNoData ||
+              isOverLimit ||
+              countQuery.isPending ||
+              isExporting
+            }
             onClick={handleDownload}
           >
             {isExporting ? "Mengunduh..." : "Unduh Excel"}

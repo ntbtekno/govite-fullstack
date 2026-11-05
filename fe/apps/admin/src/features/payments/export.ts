@@ -1,16 +1,16 @@
-// Export logic for History Payment.
-// NOTE: In Phase B, rows are sourced from mock data and filtered client-side.
-// In later stages, this will call the backend export endpoint.
+// Export logic for History Payment via Reports API (Tahap C2).
 
 import ExcelJS from "exceljs"
 import { saveDownload } from "@/lib/download"
-import type { PaymentRow, PaymentStatus } from "./mock"
+import {
+  reportsApi,
+  type PaymentReportItem,
+  type ReportQueryParams,
+  type ReportsListResponse,
+} from "@/lib/reports-api"
 
-export const paymentStatusLabel: Record<PaymentStatus, string> = {
-  success: "Berhasil",
-  pending: "Menunggu",
-  failed: "Gagal",
-}
+export const MAX_EXPORT_ROWS = 10000
+export const EXPORT_PAGE_SIZE = 100
 
 export function toLocalDateString(d: Date | string): string {
   const date = typeof d === "string" ? new Date(d) : d
@@ -37,17 +37,48 @@ export function getPaymentExportFilename(
   return `history-payment-${startTag}-${endTag}.xlsx`
 }
 
-/** Pure function to filter payment rows by calendar date range (inclusive, based on transactionAt). */
-export function filterByRange(
-  rows: PaymentRow[],
-  startDate: string,
-  endDate: string
-): PaymentRow[] {
-  if (endDate < startDate) return []
-  return rows.filter((r) => {
-    const rowDate = toLocalDateString(r.transactionAt)
-    return rowDate >= startDate && rowDate <= endDate
+/**
+ * Fetches all matching payment rows by paging through the API until reaching
+ * the total count or hitting MAX_EXPORT_ROWS.
+ */
+export async function fetchAllPaymentRows(
+  params: { q?: string; from: string; to: string },
+  fetcher: (
+    p: ReportQueryParams
+  ) => Promise<ReportsListResponse<PaymentReportItem>> = reportsApi.payments
+): Promise<PaymentReportItem[]> {
+  const firstPage = await fetcher({
+    q: params.q,
+    from: params.from,
+    to: params.to,
+    page: 1,
+    pageSize: EXPORT_PAGE_SIZE,
   })
+
+  if (firstPage.total > MAX_EXPORT_ROWS) {
+    throw new Error(
+      `Jumlah data (${firstPage.total.toLocaleString("id-ID")}) melebihi batas maksimum ekspor (${MAX_EXPORT_ROWS.toLocaleString("id-ID")} baris). Mohon persempit rentang tanggal.`
+    )
+  }
+
+  const allItems: PaymentReportItem[] = [...firstPage.items]
+  const total = firstPage.total
+
+  let currentPage = 2
+  while (allItems.length < total) {
+    const next = await fetcher({
+      q: params.q,
+      from: params.from,
+      to: params.to,
+      page: currentPage,
+      pageSize: EXPORT_PAGE_SIZE,
+    })
+    if (next.items.length === 0) break
+    allItems.push(...next.items)
+    currentPage++
+  }
+
+  return allItems
 }
 
 const dateFmt = new Intl.DateTimeFormat("id-ID", {
@@ -55,9 +86,15 @@ const dateFmt = new Intl.DateTimeFormat("id-ID", {
   timeStyle: "short",
 })
 
+function formatDateTime(val: string): string {
+  if (!val) return "-"
+  const d = new Date(val)
+  return isNaN(d.getTime()) ? val : dateFmt.format(d)
+}
+
 /** Generates and downloads the Payment Excel file using exceljs. */
 export async function downloadPaymentExcel(
-  rows: PaymentRow[],
+  rows: PaymentReportItem[],
   startDate: string,
   endDate: string
 ): Promise<void> {
@@ -99,13 +136,13 @@ export async function downloadPaymentExcel(
     totalAmount += r.amount
     const row = worksheet.addRow({
       no: idx + 1,
-      transactionAt: dateFmt.format(new Date(r.transactionAt)),
+      transactionAt: formatDateTime(r.transactionAt),
       vaNumber: r.vaNumber,
-      payerName: r.payerName,
+      payerName: "-",
       amount: r.amount,
-      channel: r.channel,
+      channel: "-",
       reference: r.reference,
-      status: paymentStatusLabel[r.status] ?? r.status,
+      status: "Berhasil",
     })
     row.getCell("amount").numFmt = "#,##0"
   })

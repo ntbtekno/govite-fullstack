@@ -1,17 +1,16 @@
-// Export logic for Billing Tagihan.
-// NOTE: In Phase B, rows are sourced from mock data and filtered client-side.
-// In later stages, this will call the backend export endpoint.
+// Export logic for Billing Tagihan via Reports API (Tahap C2).
 
 import ExcelJS from "exceljs"
 import { saveDownload } from "@/lib/download"
-import type { BillingRow, BillingStatus } from "./mock"
+import {
+  reportsApi,
+  type BillingReportItem,
+  type ReportQueryParams,
+  type ReportsListResponse,
+} from "@/lib/reports-api"
 
-export const billingStatusLabel: Record<BillingStatus, string> = {
-  unpaid: "Belum Dibayar",
-  paid: "Lunas",
-  expired: "Kedaluwarsa",
-  cancelled: "Dibatalkan",
-}
+export const MAX_EXPORT_ROWS = 10000
+export const EXPORT_PAGE_SIZE = 100
 
 export function toLocalDateString(d: Date | string): string {
   const date = typeof d === "string" ? new Date(d) : d
@@ -38,17 +37,48 @@ export function getBillingExportFilename(
   return `billing-tagihan-${startTag}-${endTag}.xlsx`
 }
 
-/** Pure function to filter billing rows by calendar date range (inclusive, based on createdAt). */
-export function filterByRange(
-  rows: BillingRow[],
-  startDate: string,
-  endDate: string
-): BillingRow[] {
-  if (endDate < startDate) return []
-  return rows.filter((r) => {
-    const rowDate = toLocalDateString(r.createdAt)
-    return rowDate >= startDate && rowDate <= endDate
+/**
+ * Fetches all matching billing rows by paging through the API until reaching
+ * the total count or hitting MAX_EXPORT_ROWS.
+ */
+export async function fetchAllBillingRows(
+  params: { q?: string; from: string; to: string },
+  fetcher: (
+    p: ReportQueryParams
+  ) => Promise<ReportsListResponse<BillingReportItem>> = reportsApi.billing
+): Promise<BillingReportItem[]> {
+  const firstPage = await fetcher({
+    q: params.q,
+    from: params.from,
+    to: params.to,
+    page: 1,
+    pageSize: EXPORT_PAGE_SIZE,
   })
+
+  if (firstPage.total > MAX_EXPORT_ROWS) {
+    throw new Error(
+      `Jumlah data (${firstPage.total.toLocaleString("id-ID")}) melebihi batas maksimum ekspor (${MAX_EXPORT_ROWS.toLocaleString("id-ID")} baris). Mohon persempit rentang tanggal.`
+    )
+  }
+
+  const allItems: BillingReportItem[] = [...firstPage.items]
+  const total = firstPage.total
+
+  let currentPage = 2
+  while (allItems.length < total) {
+    const next = await fetcher({
+      q: params.q,
+      from: params.from,
+      to: params.to,
+      page: currentPage,
+      pageSize: EXPORT_PAGE_SIZE,
+    })
+    if (next.items.length === 0) break
+    allItems.push(...next.items)
+    currentPage++
+  }
+
+  return allItems
 }
 
 const dateFmt = new Intl.DateTimeFormat("id-ID", {
@@ -56,9 +86,15 @@ const dateFmt = new Intl.DateTimeFormat("id-ID", {
   timeStyle: "short",
 })
 
+function formatDateTime(val: string): string {
+  if (!val) return "-"
+  const d = new Date(val)
+  return isNaN(d.getTime()) ? val : dateFmt.format(d)
+}
+
 /** Generates and downloads the Billing Excel file using exceljs. */
 export async function downloadBillingExcel(
-  rows: BillingRow[],
+  rows: BillingReportItem[],
   startDate: string,
   endDate: string
 ): Promise<void> {
@@ -103,9 +139,9 @@ export async function downloadBillingExcel(
       payerName: r.payerName,
       description: r.description,
       amount: r.amount,
-      createdAt: dateFmt.format(new Date(r.createdAt)),
-      dueAt: dateFmt.format(new Date(r.dueAt)),
-      status: billingStatusLabel[r.status] ?? r.status,
+      createdAt: formatDateTime(r.createdAt),
+      dueAt: formatDateTime(r.dueAt),
+      status: "Aktif",
     })
     row.getCell("amount").numFmt = "#,##0"
   })

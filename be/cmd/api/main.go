@@ -31,6 +31,7 @@ import (
 	"govite/internal/platform/postgres/store"
 	"govite/internal/platform/storage"
 	"govite/internal/policy"
+	reportsinfra "govite/internal/reports/infrastructure"
 	"govite/internal/server"
 )
 
@@ -135,6 +136,15 @@ func serve(ctx context.Context, cfg config.Config, pool *pgxpool.Pool) error {
 		slog.Error("firebase init failed; push disabled", "err", err)
 	} else if push != nil { // a nil *FCM in the interface would look enabled
 		d.Push = push
+	}
+
+	// Optional read-only MySQL reporting sidecar. Empty DSN keeps the server
+	// running and the report endpoints answer 503.
+	if reportsDB, err := reportsinfra.Open(cfg.ReportsMySQLDSN); err != nil {
+		return fmt.Errorf("REPORTS_MYSQL_DSN: %w", err)
+	} else if reportsDB != nil {
+		defer reportsDB.Close()
+		d.ReportsDB = reportsDB
 	}
 
 	// Non-production e2e hook: a fixed captcha code lets a headless browser

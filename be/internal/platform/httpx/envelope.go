@@ -92,6 +92,7 @@ var messageInd = map[string]string{
 	"INVALID_TOKEN":                "Token tidak valid atau sudah kedaluwarsa",
 	"INVALID_TWO_FACTOR_CODE":      "Kode verifikasi dua langkah salah",
 	"STORAGE_UNAVAILABLE":          "Penyimpanan file belum dikonfigurasi",
+	"REPORTS_UNAVAILABLE":          "Laporan belum dikonfigurasi",
 }
 
 func statusName(code int) string {

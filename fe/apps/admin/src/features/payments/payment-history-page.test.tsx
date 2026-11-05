@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { PaymentHistoryPage } from "./payment-history-page"
 import { render } from "@/test-utils"
 
@@ -14,6 +15,27 @@ vi.mock("@/lib/auth-context", () => ({
   }),
 }))
 
+vi.mock("@/lib/reports-api", () => ({
+  reportsApi: {
+    payments: vi.fn().mockResolvedValue({
+      items: [],
+      total: 0,
+      page: 1,
+      pageSize: 10,
+      summary: { count: 0, totalAmount: 0 },
+    }),
+  },
+}))
+
+const renderWithClient = (ui: React.ReactNode) => {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  return render(
+    <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>
+  )
+}
+
 afterEach(() => {
   state.granted = new Set()
   document.body.replaceChildren()
@@ -22,7 +44,7 @@ afterEach(() => {
 describe("PaymentHistoryPage - Export Excel visibility", () => {
   it("renders 'Export Excel' button when user has payments.export permission", async () => {
     state.granted = new Set(["payments.view", "payments.export"])
-    const { host, unmount } = await render(<PaymentHistoryPage />)
+    const { host, unmount } = await renderWithClient(<PaymentHistoryPage />)
 
     const exportBtn = Array.from(host.querySelectorAll("button")).find((b) =>
       b.textContent?.includes("Export Excel")
@@ -34,7 +56,7 @@ describe("PaymentHistoryPage - Export Excel visibility", () => {
 
   it("does not render 'Export Excel' button when user lacks payments.export permission (e.g. MITRA_STAFF)", async () => {
     state.granted = new Set(["payments.view"])
-    const { host, unmount } = await render(<PaymentHistoryPage />)
+    const { host, unmount } = await renderWithClient(<PaymentHistoryPage />)
 
     const exportBtn = Array.from(host.querySelectorAll("button")).find((b) =>
       b.textContent?.includes("Export Excel")

@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useState } from "react"
+import { useQuery } from "@tanstack/react-query"
+import { AlertCircleIcon } from "lucide-react"
 import { Input } from "@app/ui/components/input"
 import { Button } from "@app/ui/components/button"
 import {
@@ -9,32 +11,18 @@ import {
   TableHeader,
   TableRow,
 } from "@app/ui/components/table"
-import { Pagination } from "@/components/list-controls"
+import { Pagination, TableState } from "@/components/list-controls"
 import { PageHeader } from "@/components/page"
 import { useAuth } from "@/lib/auth-context"
+import { useDebounced } from "@/lib/use-debounced"
+import { ApiError } from "@/lib/api-client"
+import { reportsApi, type PaymentReportItem } from "@/lib/reports-api"
 import { PaymentExportDialog } from "./payment-export-dialog"
-import {
-  PAYMENT_STATUSES,
-  generatePayments,
-  makePaymentRow,
-  type PaymentRow,
-  type PaymentStatus,
-} from "./mock"
+
+export type PaymentRow = PaymentReportItem
 
 const PAGE_SIZE = 10
-const ANY = "all" as const
-
-const statusLabel: Record<PaymentStatus, string> = {
-  success: "Berhasil",
-  pending: "Menunggu",
-  failed: "Gagal",
-}
-
-const statusTone: Record<PaymentStatus, string> = {
-  success: "bg-emerald-100 text-emerald-800",
-  pending: "bg-amber-100 text-amber-800",
-  failed: "bg-rose-100 text-rose-800",
-}
+const REFETCH_INTERVAL = 20000
 
 const amountFmt = new Intl.NumberFormat("id-ID")
 const dateFmt = new Intl.DateTimeFormat("id-ID", {
@@ -44,79 +32,58 @@ const dateFmt = new Intl.DateTimeFormat("id-ID", {
 const clockFmt = new Intl.DateTimeFormat("id-ID", { timeStyle: "medium" })
 
 const rupiah = (n: number) => `Rp ${amountFmt.format(n)}`
-const when = (iso: string) => dateFmt.format(new Date(iso))
+const formatDateTime = (val: string) => {
+  if (!val) return "-"
+  const d = new Date(val)
+  return isNaN(d.getTime()) ? val : dateFmt.format(d)
+}
 
 export function PaymentHistoryPage() {
   const { can } = useAuth()
   const canExport = can("payments", "export")
-  const [rows, setRows] = useState<PaymentRow[]>(() => generatePayments())
   const [search, setSearch] = useState("")
-  const [status, setStatus] = useState<PaymentStatus | typeof ANY>(ANY)
+  const debouncedSearch = useDebounced(search, 300)
   const [page, setPage] = useState(1)
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null)
-  const [highlightId, setHighlightId] = useState<string | null>(null)
-  const highlightTimer = useRef<number | undefined>(undefined)
 
-  // Mock realtime source: one new payment every 20s while the tab is visible.
-  // This timer/list is replaced by the API (or a websocket) in a later stage.
+  const [tabVisible, setTabVisible] = useState(!document.hidden)
   useEffect(() => {
-    let timer: number | undefined
-    let offset = 0
-    const start = () => {
-      if (timer !== undefined) return
-      timer = window.setInterval(() => {
-        offset += 1
-        const row: PaymentRow = {
-          ...makePaymentRow(900000 + offset, new Date(), offset),
-          status: "success",
-        }
-        setRows((prev) => [row, ...prev])
-        setUpdatedAt(new Date())
-        setHighlightId(row.id)
-        window.clearTimeout(highlightTimer.current)
-        highlightTimer.current = window.setTimeout(
-          () => setHighlightId((current) => (current === row.id ? null : current)),
-          2000
-        )
-      }, 20000)
-    }
-    const stop = () => {
-      if (timer !== undefined) {
-        window.clearInterval(timer)
-        timer = undefined
-      }
-    }
-    const onVisibility = () => (document.hidden ? stop() : start())
-    if (!document.hidden) start()
-    document.addEventListener("visibilitychange", onVisibility)
-    return () => {
-      stop()
-      window.clearTimeout(highlightTimer.current)
-      document.removeEventListener("visibilitychange", onVisibility)
-    }
+    const handleVisibility = () => setTabVisible(!document.hidden)
+    document.addEventListener("visibilitychange", handleVisibility)
+    return () => document.removeEventListener("visibilitychange", handleVisibility)
   }, [])
 
-  const query = search.trim().toLowerCase()
-  const filtered = rows.filter((r) => {
-    if (status !== ANY && r.status !== status) return false
-    if (!query) return true
-    return (
-      r.vaNumber.toLowerCase().includes(query) ||
-      r.payerName.toLowerCase().includes(query) ||
-      r.reference.toLowerCase().includes(query)
-    )
+  const query = useQuery({
+    queryKey: [
+      "reports",
+      "payments",
+      { q: debouncedSearch, page, pageSize: PAGE_SIZE },
+    ],
+    queryFn: async () => {
+      const res = await reportsApi.payments({
+        q: debouncedSearch || undefined,
+        page,
+        pageSize: PAGE_SIZE,
+      })
+      setUpdatedAt(new Date())
+      return res
+    },
+    refetchInterval: tabVisible ? REFETCH_INTERVAL : false,
+    retry: (failureCount, error) => {
+      // Don't retry 503 REPORTS_UNAVAILABLE immediately
+      if (error instanceof ApiError && error.status === 503) return false
+      return failureCount < 2
+    },
   })
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
-  const currentPage = Math.min(page, totalPages)
-  const pageRows = filtered.slice(
-    (currentPage - 1) * PAGE_SIZE,
-    currentPage * PAGE_SIZE
-  )
-  const totalAmount = filtered.reduce((sum, r) => sum + r.amount, 0)
-  const today = new Date().toDateString()
-  const todayCount = rows.filter(
-    (r) => new Date(r.transactionAt).toDateString() === today
-  ).length
+
+  const is503 =
+    query.error instanceof ApiError &&
+    (query.error.status === 503 || query.error.code === "REPORTS_UNAVAILABLE")
+
+  const total = query.data?.total ?? 0
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  const items = query.data?.items ?? []
+  const summary = query.data?.summary ?? { count: total, totalAmount: 0 }
 
   return (
     <div className="grid gap-4">
@@ -132,23 +99,25 @@ export function PaymentHistoryPage() {
               </span>
               {updatedAt && <span>diperbarui {clockFmt.format(updatedAt)}</span>}
             </div>
-            {canExport && <PaymentExportDialog filteredRows={filtered} />}
+            {canExport && !is503 && (
+              <PaymentExportDialog currentQ={debouncedSearch} />
+            )}
           </div>
         }
       />
 
       <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
         <span>
-          Transaksi hari ini:{" "}
-          <strong className="text-foreground">{todayCount}</strong>
-        </span>
-        <span>
           Jumlah transaksi:{" "}
-          <strong className="text-foreground">{filtered.length}</strong>
+          <strong className="text-foreground">
+            {is503 ? "-" : summary.count.toLocaleString("id-ID")}
+          </strong>
         </span>
         <span>
           Total nominal:{" "}
-          <strong className="text-foreground">{rupiah(totalAmount)}</strong>
+          <strong className="text-foreground">
+            {is503 ? "-" : rupiah(summary.totalAmount)}
+          </strong>
         </span>
       </div>
 
@@ -162,90 +131,94 @@ export function PaymentHistoryPage() {
           placeholder="Cari VA, nama, atau referensi"
           aria-label="Cari transaksi"
           className="w-full max-w-xs"
+          disabled={is503}
         />
-        <div className="flex flex-wrap gap-1.5">
-          <Button
-            size="sm"
-            variant={status === ANY ? "default" : "outline"}
-            onClick={() => {
-              setStatus(ANY)
-              setPage(1)
-            }}
-          >
-            Semua
-          </Button>
-          {PAYMENT_STATUSES.map((s) => (
-            <Button
-              key={s}
-              size="sm"
-              variant={status === s ? "default" : "outline"}
-              onClick={() => {
-                setStatus(s)
-                setPage(1)
-              }}
-            >
-              {statusLabel[s]}
-            </Button>
-          ))}
-        </div>
       </div>
 
       <div className="overflow-x-auto rounded-xl border">
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Waktu</TableHead>
-              <TableHead>VA Number</TableHead>
-              <TableHead>Pembayar</TableHead>
-              <TableHead className="text-right">Nominal</TableHead>
-              <TableHead>Channel</TableHead>
-              <TableHead>Status</TableHead>
+              <TableHead>Waktu Transaksi</TableHead>
+              <TableHead>Tanggal</TableHead>
+              <TableHead>No VA</TableHead>
               <TableHead>Referensi</TableHead>
+              <TableHead>Keterangan</TableHead>
+              <TableHead className="text-right">Nominal</TableHead>
+              <TableHead>Status</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {pageRows.length === 0 ? (
+            {is503 ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-muted-foreground">
-                  Tidak ada transaksi.
+                <TableCell colSpan={7} className="h-32 text-center text-muted-foreground">
+                  <div className="flex flex-col items-center justify-center gap-2">
+                    <AlertCircleIcon className="size-6 text-amber-500" />
+                    <p className="font-medium text-foreground">
+                      Sumber data laporan belum tersedia.
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Database laporan belum dikonfigurasi pada server ini.
+                    </p>
+                  </div>
+                </TableCell>
+              </TableRow>
+            ) : query.isError ? (
+              <TableRow>
+                <TableCell colSpan={7} className="h-32 text-center">
+                  <div className="flex flex-col items-center justify-center gap-2">
+                    <p className="text-sm text-destructive">
+                      {query.error.message || "Gagal memuat data"}
+                    </p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => query.refetch()}
+                    >
+                      Coba lagi
+                    </Button>
+                  </div>
                 </TableCell>
               </TableRow>
             ) : (
-              pageRows.map((r) => (
-                <TableRow
-                  key={r.id}
-                  className={
-                    r.id === highlightId ? "bg-amber-50 transition-colors" : ""
-                  }
-                >
-                  <TableCell className="text-xs">
-                    {when(r.transactionAt)}
-                  </TableCell>
-                  <TableCell className="font-mono text-xs">{r.vaNumber}</TableCell>
-                  <TableCell>{r.payerName}</TableCell>
-                  <TableCell className="text-right">{rupiah(r.amount)}</TableCell>
-                  <TableCell>{r.channel}</TableCell>
-                  <TableCell>
-                    <span
-                      className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${statusTone[r.status]}`}
-                    >
-                      {statusLabel[r.status]}
-                    </span>
-                  </TableCell>
-                  <TableCell className="font-mono text-xs">{r.reference}</TableCell>
-                </TableRow>
-              ))
+              <>
+                <TableState
+                  colSpan={7}
+                  loading={query.isPending}
+                  empty={items.length === 0}
+                  emptyText="Tidak ada data"
+                />
+                {items.map((r) => (
+                  <TableRow key={r.id}>
+                    <TableCell className="text-xs">
+                      {formatDateTime(r.transactionAt)}
+                    </TableCell>
+                    <TableCell className="text-xs">{r.txDate || "-"}</TableCell>
+                    <TableCell className="font-mono text-xs">{r.vaNumber}</TableCell>
+                    <TableCell className="font-mono text-xs">{r.reference || "-"}</TableCell>
+                    <TableCell>{r.message || "-"}</TableCell>
+                    <TableCell className="text-right">{rupiah(r.amount)}</TableCell>
+                    <TableCell>
+                      <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-800">
+                        Berhasil
+                      </span>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </>
             )}
           </TableBody>
         </Table>
       </div>
 
-      <Pagination
-        page={currentPage}
-        totalPages={totalPages}
-        total={filtered.length}
-        onPageChange={setPage}
-      />
+      {!is503 && !query.isError && (
+        <Pagination
+          page={page}
+          totalPages={totalPages}
+          total={total}
+          onPageChange={setPage}
+        />
+      )}
     </div>
   )
 }

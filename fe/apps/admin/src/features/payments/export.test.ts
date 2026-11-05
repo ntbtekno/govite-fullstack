@@ -1,62 +1,107 @@
 import { describe, expect, it } from "vitest"
 import {
-  filterByRange,
+  fetchAllPaymentRows,
   getPaymentExportFilename,
   getDefaultPaymentDateRange,
+  MAX_EXPORT_ROWS,
 } from "./export"
-import type { PaymentRow } from "./mock"
+import type { PaymentReportItem, ReportsListResponse } from "@/lib/reports-api"
 
-function makeRow(id: string, date: string, amount = 100000): PaymentRow {
+function makeItem(idx: number): PaymentReportItem {
   return {
-    id,
-    transactionAt: `${date}T10:00:00.000Z`,
-    vaNumber: "8808123456789012",
-    payerName: "Nasabah Test",
-    amount,
-    channel: "BNI VA",
+    id: `pay-${idx}`,
+    txDate: "2026-11-01",
+    vaNumber: `8808${String(idx).padStart(12, "0")}`,
+    transactionAt: "2026-11-01T10:00:00Z",
+    reference: `REF${idx}`,
+    message: "Pembayaran berhasil",
+    amount: idx * 25000,
     status: "success",
-    reference: "REF1234567890",
   }
 }
 
-describe("Payment export - filterByRange", () => {
-  const rows: PaymentRow[] = [
-    makeRow("p1", "2026-10-01"),
-    makeRow("p2", "2026-10-15"),
-    makeRow("p3", "2026-10-31"),
-    makeRow("p4", "2026-11-01"),
-    makeRow("p5", "2026-11-05"),
-  ]
+describe("Payment export - fetchAllPaymentRows", () => {
+  it("fetches single page when total <= pageSize", async () => {
+    const mockFetcher = async (): Promise<ReportsListResponse<PaymentReportItem>> => ({
+      items: [makeItem(1), makeItem(2)],
+      total: 2,
+      page: 1,
+      pageSize: 100,
+      summary: { count: 2, totalAmount: 75000 },
+    })
 
-  it("termasuk batas inklusif di kedua ujung rentang tanggal", () => {
-    const result = filterByRange(rows, "2026-10-15", "2026-11-01")
-    expect(result.map((r) => r.id)).toEqual(["p2", "p3", "p4"])
+    const rows = await fetchAllPaymentRows(
+      { from: "2026-10-01", to: "2026-10-31" },
+      mockFetcher
+    )
+    expect(rows).toHaveLength(2)
+    expect(rows[0].id).toBe("pay-1")
   })
 
-  it("menolak baris di luar rentang tanggal", () => {
-    const result = filterByRange(rows, "2026-10-10", "2026-10-20")
-    expect(result.map((r) => r.id)).toEqual(["p2"])
-    expect(result.some((r) => r.id === "p1" || r.id === "p3")).toBe(false)
+  it("pages through and stops exactly at total", async () => {
+    const calls: number[] = []
+    const mockFetcher = async (p: { page?: number }): Promise<ReportsListResponse<PaymentReportItem>> => {
+      const page = p.page ?? 1
+      calls.push(page)
+      if (page === 1) {
+        return {
+          items: Array.from({ length: 100 }, (_, i) => makeItem(i + 1)),
+          total: 210,
+          page: 1,
+          pageSize: 100,
+          summary: { count: 210, totalAmount: 2000000 },
+        }
+      }
+      if (page === 2) {
+        return {
+          items: Array.from({ length: 100 }, (_, i) => makeItem(i + 101)),
+          total: 210,
+          page: 2,
+          pageSize: 100,
+          summary: { count: 210, totalAmount: 2000000 },
+        }
+      }
+      return {
+        items: Array.from({ length: 10 }, (_, i) => makeItem(i + 201)),
+        total: 210,
+        page: 3,
+        pageSize: 100,
+        summary: { count: 210, totalAmount: 2000000 },
+      }
+    }
+
+    const rows = await fetchAllPaymentRows(
+      { from: "2026-10-01", to: "2026-10-31" },
+      mockFetcher
+    )
+    expect(calls).toEqual([1, 2, 3])
+    expect(rows).toHaveLength(210)
+    expect(rows[0].id).toBe("pay-1")
+    expect(rows[209].id).toBe("pay-210")
   })
 
-  it("menghasilkan array kosong bila tidak ada data dalam rentang", () => {
-    const result = filterByRange(rows, "2026-09-01", "2026-09-30")
-    expect(result).toHaveLength(0)
-  })
+  it("throws error when total exceeds MAX_EXPORT_ROWS", async () => {
+    const mockFetcher = async (): Promise<ReportsListResponse<PaymentReportItem>> => ({
+      items: [],
+      total: MAX_EXPORT_ROWS + 1,
+      page: 1,
+      pageSize: 100,
+      summary: { count: MAX_EXPORT_ROWS + 1, totalAmount: 0 },
+    })
 
-  it("menghasilkan array kosong jika tanggal selesai lebih awal dari tanggal mulai", () => {
-    const result = filterByRange(rows, "2026-11-05", "2026-10-01")
-    expect(result).toHaveLength(0)
+    await expect(
+      fetchAllPaymentRows({ from: "2026-10-01", to: "2026-10-31" }, mockFetcher)
+    ).rejects.toThrow(/melebihi batas maksimum/)
   })
 })
 
-describe("Payment export - getPaymentExportFilename", () => {
-  it("membangun nama file sesuai pola history-payment-<yyyymmdd>-<yyyymmdd>.xlsx", () => {
+describe("Payment export - helpers", () => {
+  it("builds file name matching history-payment-<yyyymmdd>-<yyyymmdd>.xlsx", () => {
     const filename = getPaymentExportFilename("2026-10-06", "2026-11-05")
     expect(filename).toBe("history-payment-20261006-20261105.xlsx")
   })
 
-  it("membuat rentang tanggal default 30 hari terakhir", () => {
+  it("produces 30 days default range", () => {
     const fixedNow = new Date("2026-11-05T12:00:00Z")
     const { startDate, endDate } = getDefaultPaymentDateRange(fixedNow)
     expect(endDate).toBe("2026-11-05")

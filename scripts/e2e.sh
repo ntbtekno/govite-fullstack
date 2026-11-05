@@ -17,6 +17,9 @@ export API_PROXY_TARGET="http://localhost:$port"
 
 cd "$root/be"
 export DATABASE_URL="${DATABASE_URL:-postgres://app:app@localhost:5436/app_test?sslmode=disable}"
+# External reporting DB is absent in standard e2e; ensure empty DSN so reports endpoints
+# answer 503 as expected by the unavailable state tests.
+export REPORTS_MYSQL_DSN="${REPORTS_MYSQL_DSN:-}"
 export JWT_ACCESS_SECRET="${JWT_ACCESS_SECRET:-$(printf 's%.0s' {1..32})}"
 export REFRESH_TOKEN_PEPPER="${REFRESH_TOKEN_PEPPER:-$(printf 'p%.0s' {1..16})}"
 export WEB_URL="http://localhost:4173" LOG_LEVEL=silent APP_PORT="$port"
