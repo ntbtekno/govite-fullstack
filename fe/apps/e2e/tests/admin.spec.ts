@@ -406,3 +406,40 @@ test("expired Superadmin session lands on /login", async ({ page }) => {
 
   expect(problems).toEqual([])
 })
+
+// Proves the page skeleton is shown during boot / pending loading when session
+// resolution is delayed, without flashing a blank white page.
+test("page skeleton is shown during delayed session boot on reload", async ({
+  page,
+}) => {
+  const problems = watch(page)
+  await page.goto("/login-mitra")
+  await page.getByLabel("Kode Mitra").fill(mitraKode)
+  await page.getByLabel("Username atau Email").fill(mitraUsername)
+  await page.getByLabel("Password").fill(mitraPassword)
+  await page.getByRole("textbox", { name: "Captcha" }).fill(captcha)
+  await page.getByRole("button", { name: "Sign in" }).click()
+  await expect(page).toHaveURL(/\/admin\/dashboard/)
+
+  await page.getByRole("link", { name: "Billing Tagihan" }).click()
+  await expect(page).toHaveURL(/\/admin\/billing$/)
+
+  // Hold the boot session probe (/api/v1/auth/refresh and /api/v1/auth/me) for 1s
+  await page.route(/\/api\/v1\/auth\/(refresh|me)/, async (route) => {
+    await new Promise((r) => setTimeout(r, 1000))
+    await route.continue()
+  })
+
+  // Trigger reload: during the 1s delay, the skeleton with testid="page-skeleton" must be visible
+  const reloadPromise = page.reload()
+  await expect(page.getByTestId("page-skeleton")).toBeVisible()
+  await reloadPromise
+
+  // After the probe finishes, the real page content is rendered and URL stays on billing
+  await expect(page).toHaveURL(/\/admin\/billing$/)
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Billing Tagihan" })
+  ).toBeVisible()
+
+  expect(problems).toEqual([])
+})

@@ -1,8 +1,11 @@
 import { createFileRoute, redirect } from "@tanstack/react-router"
 import { BillingPage } from "@/features/billing/billing-page"
 import { canUser, settledAuth } from "@/lib/auth-context"
+import { PageSkeleton } from "@/components/page-skeleton"
 
 export const Route = createFileRoute("/admin/billing")({
+  pendingMs: 150,
+  pendingComponent: PageSkeleton,
   // Mitra-only report page: a mitra session plus billing.view, else the
   // dashboard. Await the boot probe: on a hard refresh the router context still
   // holds the pre-refresh (loading, user=null) snapshot while the parent

@@ -9,9 +9,13 @@ import { router } from "./router.tsx"
 import { queryClient } from "@/lib/query-client"
 import { AuthProvider, useAuth } from "@/lib/auth-context"
 import { ThemeProvider } from "@/components/theme-provider.tsx"
+import { AdminLayoutSkeleton } from "@/components/admin-skeleton"
 
 function AppRouter() {
   const auth = useAuth()
+  if (auth.status === "loading") {
+    return <AdminLayoutSkeleton />
+  }
   return <RouterProvider router={router} context={{ auth }} />
 }
 

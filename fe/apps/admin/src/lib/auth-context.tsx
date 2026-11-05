@@ -11,9 +11,10 @@ import { flushSync } from "react-dom"
 import type { LoginResponse, MeResponse, Scope } from "@app/contracts"
 import * as authApi from "./auth-api"
 import { queryClient } from "./query-client"
-import { refreshSession } from "./refresh-session"
+import { refreshSession, type Session } from "./refresh-session"
 import { setOnSessionExpired } from "./authed-request"
 import { rememberAuthKind } from "./session-kind"
+import { SessionWatchdog } from "./session-watchdog"
 import { getAccessToken, setAccessToken } from "./token-store"
 
 type SettledStatus = "authenticated" | "anonymous"
@@ -94,12 +95,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   })
 
+  // Automatic watchdog: fires on access token exp to refresh or expire the session
+  const [watchdog] = useState(() => new SessionWatchdog())
+
+  const handleExpired = useCallback(() => {
+    watchdog.stop()
+    setAccessToken(null)
+    queryClient.clear()
+    setState({ status: "anonymous", user: null })
+  }, [watchdog])
+
+  useEffect(() => {
+    watchdog.setCallbacks({
+      onSessionRefreshed: (session: Session) => {
+        setAccessToken(session.accessToken)
+        rememberAuthKind(session.user.mitraId)
+        setState({ status: "authenticated", user: session.user })
+      },
+      onSessionExpired: handleExpired,
+    })
+    return () => watchdog.destroy()
+  }, [watchdog, handleExpired])
+
   useEffect(() => {
     let cancelled = false
     refreshSession().then((session) => {
       if (session) {
         setAccessToken(session.accessToken)
         rememberAuthKind(session.user.mitraId)
+        watchdog.schedule(session.accessToken)
         if (!cancelled)
           setState({ status: "authenticated", user: session.user })
         boot.settle({ status: "authenticated", user: session.user })
@@ -111,20 +135,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true
     }
-  }, [boot])
+  }, [boot, watchdog])
 
   useEffect(() => {
-    setOnSessionExpired(() => {
-      setAccessToken(null)
-      queryClient.clear()
-      setState({ status: "anonymous", user: null })
-    })
+    setOnSessionExpired(handleExpired)
     return () => setOnSessionExpired(null)
-  }, [])
+  }, [handleExpired])
 
   const finishLogin = useCallback(async (result: LoginResponse) => {
     if (result.requiresTwoFactor) return result
     setAccessToken(result.accessToken)
+    watchdog.schedule(result.accessToken)
     // Drop anything cached for a previous session before the new user renders.
     queryClient.clear()
     const user = await authApi.getMe(result.accessToken)
@@ -134,7 +155,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // pre-login snapshot and bounces straight back to /login.
     flushSync(() => setState({ status: "authenticated", user }))
     return result
-  }, [])
+  }, [watchdog])
 
   const login = useCallback(
     async (
@@ -182,13 +203,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   )
 
   const logout = useCallback(async () => {
+    watchdog.stop()
     await authApi.logout().catch(() => undefined)
     setAccessToken(null)
     flushSync(() => setState({ status: "anonymous", user: null }))
     // Clear only after the state flip has unmounted the admin pages: clearing
     // under mounted queries makes them refetch with no token (401 + refresh).
     queryClient.clear()
-  }, [])
+  }, [watchdog])
 
   const refreshUser = useCallback(async () => {
     const token = getAccessToken()

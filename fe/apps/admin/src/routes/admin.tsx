@@ -26,8 +26,11 @@ import { NotificationBell } from "@/features/shell/notification-bell"
 import { useTheme } from "@/components/theme-provider"
 import { settledAuth } from "@/lib/auth-context"
 import { lastAuthKind, loginPathForSession } from "@/lib/session-kind"
+import { PageSkeleton } from "@/components/page-skeleton"
 
 export const Route = createFileRoute("/admin")({
+  pendingMs: 150,
+  pendingComponent: PageSkeleton,
   beforeLoad: async ({ context, location }) => {
     const settled = await settledAuth(context.auth)
     if (settled.status !== "authenticated") {
