@@ -38,7 +38,7 @@ func (c Crypto) ParseAccess(token string) (kernel.Principal, error) {
 	return kernel.Principal{ID: cl.Subject, RoleID: cl.RoleID, SessionID: cl.SID, MitraID: cl.MitraID}, nil
 }
 
-const totpIssuer = "Rekanara"
+const totpIssuer = "Rekan NTB"
 
 // TOTP adapts pquerna/otp to domain.OTP.
 type TOTP struct{}

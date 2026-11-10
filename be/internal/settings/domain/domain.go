@@ -4,6 +4,8 @@ package domain
 import (
 	"context"
 	"strings"
+
+	"govite/internal/kernel"
 )
 
 // Settings mirrors AppSettingsSchema in fe/packages/contracts.
@@ -32,7 +34,7 @@ type Settings struct {
 }
 
 func Defaults() Settings {
-	return Settings{AppName: "Rekanara", Timezone: "Asia/Jakarta", Currency: "IDR", MaintenanceRetentionDays: 90, PushNotificationsEnabled: true}
+	return Settings{AppName: "Rekan NTB", Tagline: kernel.Ptr("Bank NTB Syariah"), Timezone: "Asia/Jakarta", Currency: "IDR", MaintenanceRetentionDays: 90, PushNotificationsEnabled: true}
 }
 
 // Normalize trims strings and turns empty optionals into null.

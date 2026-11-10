@@ -1244,7 +1244,7 @@ func TestSettingsAndRoles(t *testing.T) {
 
 	r := e.do("GET", "/settings/public", nil)
 	expect(t, r, 200)
-	if r.data()["appName"] != "Rekanara" {
+	if r.data()["appName"] != "Rekan NTB" {
 		t.Fatalf("defaults: %s", r.Raw)
 	}
 	cur := e.do("GET", "/settings", nil, bearer(admin)).data()
