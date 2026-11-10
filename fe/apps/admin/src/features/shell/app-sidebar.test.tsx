@@ -20,7 +20,7 @@ vi.mock("@/lib/auth-context", () => ({
 vi.mock("@/lib/public-settings", () => ({
   usePublicSettings: () => ({
     data: {
-      appName: "Portal Management Virtual Account",
+      appName: "Rekan NTB",
       tagline: "Bank NTB Syariah",
       logoUrl: "/images/logo-bank-ntb-syariah.webp",
     },
@@ -154,7 +154,7 @@ describe("AppSidebar brand", () => {
     state.granted = new Set(["users.view"])
     await renderSidebar()
 
-    expect(document.body.textContent).toContain("Portal Management Virtual Account")
+    expect(document.body.textContent).toContain("Rekan NTB")
     expect(document.body.textContent).toContain("Bank NTB Syariah")
     const logo = document.querySelector("img[alt='Bank NTB Syariah']")
     expect(logo).not.toBeNull()

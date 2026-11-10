@@ -121,7 +121,7 @@ const reports: Guarded[] = [
 export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
   const { can, user } = useAuth()
   const settings = usePublicSettings()
-  const appName = settings.data?.appName ?? "Portal Management Virtual Account"
+  const appName = settings.data?.appName ?? "Rekan NTB"
   const appTagline = settings.data?.tagline ?? "Bank NTB Syariah"
   const logoUrl = settings.data?.logoUrl ?? "/images/logo-bank-ntb-syariah.webp"
   const visible = (items: Guarded[]) =>

@@ -60,7 +60,7 @@ describe("AppLoader", () => {
 
     const text = host.querySelector("p")
     expect(text).not.toBeNull()
-    expect(text?.textContent).toBe("Portal Management Virtual Account")
+    expect(text?.textContent).toBe("Rekan NTB")
 
     const bar = host.querySelector(".app-loader-bar")
     expect(bar).not.toBeNull()

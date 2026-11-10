@@ -12,7 +12,7 @@ export const AppLoader: FC = () => {
         className="h-16 w-auto"
       />
       <p className="mt-4 text-sm text-muted-foreground">
-        Portal Management Virtual Account
+        Rekan NTB
       </p>
       <div className="mt-6 w-64" aria-hidden="true">
         <div className="relative h-1.5 overflow-hidden rounded-full bg-muted">

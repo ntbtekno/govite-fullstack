@@ -44,7 +44,7 @@ function Brand() {
       />
       <div className="flex flex-col">
         <span className="text-sm font-semibold tracking-tight text-slate-900">
-          Portal Management Virtual Account
+          Rekan NTB
         </span>
         <span className="text-xs text-slate-500">
           by Bank NTB Syariah
@@ -168,7 +168,7 @@ export function AuthLayout({
           {footer}
         </div>
         <div className="mt-auto pt-4 text-center text-xs text-muted-foreground">
-          <p>Portal Management Virtual Account v2.0</p>
+          <p>Rekan NTB v2.0</p>
           <p>© 2026 Bank NTB Syariah. All rights reserved.</p>
         </div>
       </main>
