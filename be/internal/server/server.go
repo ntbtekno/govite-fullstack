@@ -74,14 +74,20 @@ func New(d Deps) (*fiber.App, *sysapp.Service) {
 		KeyGenerator: func(c *fiber.Ctx) string { return "webhook:" + c.IP() },
 	})
 
-	api := f.Group("/api/v1", globalLimit)
 	h, sys := wire(d)
 
-	// Public.
+	// Auth routes: mounted under /api/v1/auth WITHOUT globalLimit.
+	// Each has its own dedicated limiter (login, refresh, captcha).
+	authGroup := f.Group("/api/v1/auth")
+	h.auth.Routes(authGroup, loginLimit, refreshLimit, captchaLimit)
+
+	// All other /api/v1 routes under globalLimit.
+	api := f.Group("/api/v1", globalLimit)
+
+	// Public (non-auth).
 	h.system.PublicRoutes(api)
 	h.settings.PublicRoutes(api)
 	h.integrations.PublicRoutes(api, webhookLimit)
-	h.auth.Routes(api, loginLimit, refreshLimit, captchaLimit)
 
 	// Signed in, no permission: self-service.
 	me := api.Group("", h.auth.Authenticate)

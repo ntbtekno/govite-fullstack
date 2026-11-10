@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { LoginForm } from "./login-form"
 import { click, render, submit } from "../../../test-utils"
 import { ApiError } from "../../../lib/api-client"
@@ -40,6 +40,10 @@ function nextCaptcha() {
   }
 }
 
+beforeEach(() => {
+  sessionStorage.clear()
+})
+
 afterEach(() => {
   captchaSeq = 0
   login.mockReset()
@@ -49,6 +53,7 @@ afterEach(() => {
   getCaptcha.mockReset()
   navigate.mockReset()
   push.mockReset()
+  sessionStorage.clear()
   document.body.replaceChildren()
 })
 
@@ -201,5 +206,25 @@ describe("LoginForm", () => {
       "Terlalu banyak percobaan"
     )
     expect(password.value).toBe("")
+  })
+
+  it("displays session expired message from cookie and clears it", async () => {
+    getCaptcha.mockImplementation(async () => nextCaptcha())
+    document.cookie =
+      "sessionExpiredMessage=Sesi%20Anda%20telah%20berakhir.%20Silakan%20masuk%20kembali.; path=/; max-age=60"
+    await render(<LoginForm />)
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe(
+      "Sesi Anda telah berakhir. Silakan masuk kembali."
+    )
+    // Cookie should be cleared after reading
+    expect(document.cookie).not.toContain("sessionExpiredMessage")
+  })
+
+  it("does not show session expired message on manual logout", async () => {
+    getCaptcha.mockImplementation(async () => nextCaptcha())
+    // Simulate manual logout by NOT setting cookie
+    document.cookie = "sessionExpiredMessage=; path=/; max-age=0"
+    await render(<LoginForm />)
+    expect(document.querySelector('[role="alert"]')).toBeNull()
   })
 })

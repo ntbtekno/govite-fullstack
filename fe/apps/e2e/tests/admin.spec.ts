@@ -395,6 +395,10 @@ test("expired mitra session lands on /login-mitra", async ({ page }) => {
   await page.context().clearCookies()
   await page.reload()
   await expect(page).toHaveURL(/\/login-mitra(\?|$)/)
+  // Wait for login form to be visible (ensures React has mounted)
+  await expect(page.getByLabel("Kode Mitra")).toBeVisible()
+  // Session expired message should be visible on login-mitra page
+  await expect(page.getByText("Sesi Anda telah berakhir. Silakan masuk kembali.")).toBeVisible()
 
   expect(problems).toEqual([])
 })
@@ -405,7 +409,25 @@ test("expired Superadmin session lands on /login", async ({ page }) => {
 
   await page.context().clearCookies()
   await page.reload()
+  await expect(page).toHaveURL(/\/login(\?.*)?$/)
+  // Wait for login form to be visible (ensures React has mounted)
+  await expect(page.getByLabel("Username atau Email")).toBeVisible()
+  // Session expired message should be visible on login page
+  await expect(page.getByText("Sesi Anda telah berakhir. Silakan masuk kembali.")).toBeVisible()
+
+  expect(problems).toEqual([])
+})
+
+// Manual logout should NOT show session expired message
+test("manual logout does not show session expired message", async ({ page }) => {
+  const problems = watch(page)
+  await signIn(page)
+
+  await page.getByRole("button", { name: /Super Admin/ }).click()
+  await page.getByRole("menuitem", { name: "Log out" }).click()
   await expect(page).toHaveURL(/\/login(\?|$)/)
+  // No session expired message on manual logout
+  await expect(page.getByText("Sesi Anda telah berakhir. Silakan masuk kembali.")).not.toBeVisible()
 
   expect(problems).toEqual([])
 })

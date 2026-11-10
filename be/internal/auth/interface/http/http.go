@@ -214,14 +214,13 @@ func noContent(c *fiber.Ctx, err error) error {
 	return httpx.NoContent(c)
 }
 
-// Routes mounts /auth. loginLimit throttles credential endpoints separately
+// Routes mounts auth endpoints. loginLimit throttles credential endpoints separately
 // from the global limit, so loosening THROTTLE_LIMIT never loosens login.
 // captchaLimit caps how fast a bot can drain captcha challenges.
+// The caller should mount this under /api/v1/auth (or similar).
 func (h Handler) Routes(r fiber.Router, loginLimit, refreshLimit, captchaLimit fiber.Handler) {
-	g := r.Group("/auth")
-
 	// Public and cache-control: no-store so browsers never reuse a spent image.
-	g.Get("/captcha", captchaLimit, func(c *fiber.Ctx) error {
+	r.Get("/captcha", captchaLimit, func(c *fiber.Ctx) error {
 		c.Set(fiber.HeaderCacheControl, "no-store")
 		cap, err := h.Svc.Captcha.Issue(c.UserContext())
 		if err != nil {
@@ -234,7 +233,7 @@ func (h Handler) Routes(r fiber.Router, loginLimit, refreshLimit, captchaLimit f
 		})
 	})
 
-	g.Post("/login", loginLimit, body(func(c *fiber.Ctx, b loginReq) error {
+	r.Post("/login", loginLimit, body(func(c *fiber.Ctx, b loginReq) error {
 		sess, ch, err := h.Svc.Login(c.UserContext(), b.Login, b.Password, b.CaptchaID, b.Captcha, client(c))
 		h.logAttempt(c, outcome(LoginAttempt{Endpoint: "/auth/login", Login: b.Login}, err, fiber.StatusCreated))
 		if err != nil {
@@ -243,7 +242,7 @@ func (h Handler) Routes(r fiber.Router, loginLimit, refreshLimit, captchaLimit f
 		return deliver(c, sess, ch)
 	}))
 
-	g.Post("/login-mitra", loginLimit, body(func(c *fiber.Ctx, b loginMitraReq) error {
+	r.Post("/login-mitra", loginLimit, body(func(c *fiber.Ctx, b loginMitraReq) error {
 		sess, ch, err := h.Svc.LoginMitra(c.UserContext(), b.MitraKode, b.Username, b.Password, b.CaptchaID, b.Captcha, client(c))
 		h.logAttempt(c, outcome(LoginAttempt{Endpoint: "/auth/login-mitra", MitraKode: b.MitraKode, Login: b.Username}, err, fiber.StatusCreated))
 		if err != nil {
@@ -252,7 +251,7 @@ func (h Handler) Routes(r fiber.Router, loginLimit, refreshLimit, captchaLimit f
 		return deliver(c, sess, ch)
 	}))
 
-	g.Post("/2fa/verify", loginLimit, body(func(c *fiber.Ctx, b verifyReq) error {
+	r.Post("/2fa/verify", loginLimit, body(func(c *fiber.Ctx, b verifyReq) error {
 		sess, err := h.Svc.VerifyTwoFactor(c.UserContext(), b.ChallengeToken, b.Code, client(c))
 		if err != nil {
 			return err
@@ -260,7 +259,7 @@ func (h Handler) Routes(r fiber.Router, loginLimit, refreshLimit, captchaLimit f
 		return deliver(c, sess, nil)
 	}))
 
-	g.Post("/2fa/verify-backup", loginLimit, body(func(c *fiber.Ctx, b backupReq) error {
+	r.Post("/2fa/verify-backup", loginLimit, body(func(c *fiber.Ctx, b backupReq) error {
 		sess, err := h.Svc.VerifyBackupCode(c.UserContext(), b.ChallengeToken, b.BackupCode, client(c))
 		if err != nil {
 			return err
@@ -268,7 +267,7 @@ func (h Handler) Routes(r fiber.Router, loginLimit, refreshLimit, captchaLimit f
 		return deliver(c, sess, nil)
 	}))
 
-	g.Post("/refresh", refreshLimit, func(c *fiber.Ctx) error {
+	r.Post("/refresh", refreshLimit, func(c *fiber.Ctx) error {
 		tok := readRefresh(c)
 		if tok == "" {
 			clearRefreshCookie(c)
@@ -290,7 +289,7 @@ func (h Handler) Routes(r fiber.Router, loginLimit, refreshLimit, captchaLimit f
 		return httpx.OK(c, res)
 	})
 
-	g.Post("/logout", refreshLimit, func(c *fiber.Ctx) error {
+	r.Post("/logout", refreshLimit, func(c *fiber.Ctx) error {
 		if tok := readRefresh(c); tok != "" {
 			if err := h.Svc.Logout(c.UserContext(), tok); err != nil {
 				return err
@@ -300,20 +299,20 @@ func (h Handler) Routes(r fiber.Router, loginLimit, refreshLimit, captchaLimit f
 		return httpx.NoContent(c)
 	})
 
-	g.Post("/forgot-password", loginLimit, body(func(c *fiber.Ctx, b forgotReq) error {
+	r.Post("/forgot-password", loginLimit, body(func(c *fiber.Ctx, b forgotReq) error {
 		return noContent(c, h.Svc.RequestPasswordReset(c.UserContext(), b.Email, b.Channel))
 	}))
-	g.Post("/reset-password", loginLimit, body(func(c *fiber.Ctx, b resetReq) error {
+	r.Post("/reset-password", loginLimit, body(func(c *fiber.Ctx, b resetReq) error {
 		return noContent(c, h.Svc.ResetPassword(c.UserContext(), b.Channel, b.Token, b.Email, b.OTP, b.NewPassword))
 	}))
-	g.Post("/accept-invite", loginLimit, body(func(c *fiber.Ctx, b acceptInviteReq) error {
+	r.Post("/accept-invite", loginLimit, body(func(c *fiber.Ctx, b acceptInviteReq) error {
 		return noContent(c, h.Svc.AcceptInvite(c.UserContext(), b.Token, b.FullName, b.Password))
 	}))
-	g.Post("/verify-email", loginLimit, body(func(c *fiber.Ctx, b tokenReq) error {
+	r.Post("/verify-email", loginLimit, body(func(c *fiber.Ctx, b tokenReq) error {
 		return noContent(c, h.Svc.VerifyEmail(c.UserContext(), b.Token))
 	}))
 
-	g.Get("/me", h.Authenticate, func(c *fiber.Ctx) error {
+	r.Get("/me", h.Authenticate, func(c *fiber.Ctx) error {
 		u, err := h.Svc.Me(c.UserContext())
 		if err != nil {
 			return err

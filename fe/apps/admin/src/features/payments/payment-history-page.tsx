@@ -31,6 +31,10 @@ const clockFmt = new Intl.DateTimeFormat("id-ID", { timeStyle: "medium" })
 
 const rupiah = (n: number) => `Rp ${amountFmt.format(n)}`
 
+function isPollingStopError(status: number): boolean {
+  return status === 429 || status === 503
+}
+
 export function PaymentHistoryPage() {
   const { can } = useAuth()
   const canExport = can("payments", "export")
@@ -53,6 +57,9 @@ export function PaymentHistoryPage() {
     document.addEventListener("visibilitychange", handleVisibility)
     return () => document.removeEventListener("visibilitychange", handleVisibility)
   }, [])
+
+  // Track if polling was stopped due to 429/503; user can re-enable by manual refresh
+  const [pollingStopped, setPollingStopped] = useState(false)
 
   const query = useQuery({
     queryKey: [
@@ -77,8 +84,13 @@ export function PaymentHistoryPage() {
       setUpdatedAt(new Date())
       return res
     },
-    refetchInterval: tabVisible ? REFETCH_INTERVAL : false,
+    refetchInterval: tabVisible && !pollingStopped ? REFETCH_INTERVAL : false,
     retry: (failureCount, error) => {
+      if (error instanceof ApiError && isPollingStopError(error.status)) {
+        // Stop polling on 429 or 503
+        setPollingStopped(true)
+        return false
+      }
       if (error instanceof ApiError && error.status === 503) return false
       return failureCount < 2
     },
@@ -109,13 +121,34 @@ export function PaymentHistoryPage() {
         actions={
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-2.5 py-1 font-semibold text-emerald-700">
-                <span className="size-1.5 animate-pulse rounded-full bg-emerald-600" />
-                LIVE
-              </span>
-              {updatedAt && <span>diperbarui {clockFmt.format(updatedAt)}</span>}
+              {pollingStopped ? (
+                <>
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-1 font-semibold text-amber-700">
+                    <span className="size-1.5 rounded-full bg-amber-600" />
+                    POLLING DIBERHENTIKAN
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setPollingStopped(false)
+                      query.refetch()
+                    }}
+                  >
+                    Aktifkan polling
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-2.5 py-1 font-semibold text-emerald-700">
+                    <span className="size-1.5 animate-pulse rounded-full bg-emerald-600" />
+                    LIVE
+                  </span>
+                  {updatedAt && <span>diperbarui {clockFmt.format(updatedAt)}</span>}
+                </>
+              )}
             </div>
-            {canExport && !is503 && (
+            {canExport && !is503 && !pollingStopped && (
               <PaymentExportDialog currentQ={debouncedSearch} />
             )}
           </div>

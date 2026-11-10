@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent } from "react"
+import { useEffect, useRef, useState, type FormEvent } from "react"
 import { SECURITY_POLICY } from "@app/contracts"
 import { Link, useNavigate, useRouter } from "@tanstack/react-router"
 import { QRCodeSVG } from "qrcode.react"
@@ -35,6 +35,21 @@ export function LoginForm({
     manualKey?: string
     otpauthUrl?: string
   } | null>(null)
+
+  // Read and clear session expired message from cookie on mount
+  useEffect(() => {
+    const allCookies = document.cookie
+    const cookie = allCookies
+      .split("; ")
+      .find((c) => c.startsWith("sessionExpiredMessage="))
+    if (cookie) {
+      const msg = decodeURIComponent(cookie.split("=")[1])
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time read on mount
+      setError(msg)
+      // Clear the cookie
+      document.cookie = "sessionExpiredMessage=; path=/; max-age=0"
+    }
+  }, [])
 
   async function finish() {
     if (redirectTo) router.history.push(redirectTo)

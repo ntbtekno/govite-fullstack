@@ -6,7 +6,7 @@ import {
   type ApiRequestOptions,
   type Page,
 } from "./api-client"
-import { getAccessToken, setAccessToken } from "./token-store"
+import { getAccessToken } from "./token-store"
 import { refreshSession } from "./refresh-session"
 import { toast } from "sonner"
 
@@ -41,13 +41,14 @@ async function withRefresh<T>(request: (token: string | null) => Promise<T>) {
       toastApiError(err)
       throw err
     }
-    const session = await refreshSession()
-    if (!session) {
+    const result = await refreshSession()
+    if (result.kind === "expired") {
       onSessionExpired?.()
       throw err
     }
-    setAccessToken(session.accessToken)
-    return request(session.accessToken)
+    // Transient (429/5xx/network) during refresh: don't logout, propagate error
+    // The watchdog will handle retry with backoff
+    throw err
   }
 }
 

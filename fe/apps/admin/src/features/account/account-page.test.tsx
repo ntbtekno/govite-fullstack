@@ -149,7 +149,7 @@ describe("AccountPage password change", () => {
 
   it("shows validation error toast when new password is invalid (VALIDATION_ERROR)", async () => {
     state.changePassword.mockRejectedValue(
-      new ApiError(400, "VALIDATION_ERROR", "Validation failed", "Validasi gagal", "newPassword: password=8;32")
+      new ApiError(400, "VALIDATION_ERROR", "Validation failed", "Validasi gagal")
     )
 
     const { host } = await renderPage()

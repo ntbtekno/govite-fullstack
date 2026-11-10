@@ -11,11 +11,18 @@ import { flushSync } from "react-dom"
 import type { LoginResponse, MeResponse, Scope } from "@app/contracts"
 import * as authApi from "./auth-api"
 import { queryClient } from "./query-client"
-import { refreshSession, type Session } from "./refresh-session"
+import { refreshSession, type Session, type RefreshResult } from "./refresh-session"
 import { setOnSessionExpired } from "./authed-request"
 import { rememberAuthKind } from "./session-kind"
 import { SessionWatchdog } from "./session-watchdog"
 import { getAccessToken, setAccessToken } from "./token-store"
+
+// Debug: expose boot effect result for Playwright testing
+declare global {
+  interface Window {
+    __DEBUG_BOOT_EFFECT__: { ran: boolean; result: RefreshResult | null } | null;
+  }
+}
 
 type SettledStatus = "authenticated" | "anonymous"
 type AuthStatus = "loading" | SettledStatus
@@ -98,11 +105,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Automatic watchdog: fires on access token exp to refresh or expire the session
   const [watchdog] = useState(() => new SessionWatchdog())
 
-  const handleExpired = useCallback(() => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- required by WatchdogCallbacks interface
+const handleExpired = useCallback((_message?: string) => {
     watchdog.stop()
     setAccessToken(null)
     queryClient.clear()
     setState({ status: "anonymous", user: null })
+    // Store expiry message in a cookie for the login page to display.
+    // Use fixed Indonesian message as required, not the backend message.
+    const fixedMessage = "Sesi Anda telah berakhir. Silakan masuk kembali."
+    try {
+      const cookieValue = `sessionExpiredMessage=${encodeURIComponent(fixedMessage)}; path=/; max-age=60; SameSite=Lax`
+      document.cookie = cookieValue
+    } catch {
+      // ignore
+    }
   }, [watchdog])
 
   useEffect(() => {
@@ -113,21 +130,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setState({ status: "authenticated", user: session.user })
       },
       onSessionExpired: handleExpired,
+      onTransientError: (retryAfterMs, message) => {
+        // Transient error (429/5xx/network): show a toast or indicator if needed,
+        // but do NOT log out. The watchdog will retry automatically.
+        console.warn(`Session refresh transient error: ${message}, retry in ${retryAfterMs}ms`)
+      },
     })
     return () => watchdog.destroy()
   }, [watchdog, handleExpired])
 
   useEffect(() => {
     let cancelled = false
-    refreshSession().then((session) => {
-      if (session) {
+    refreshSession().then((result) => {
+      if (result.kind === "success") {
+        const session = result.session
         setAccessToken(session.accessToken)
         rememberAuthKind(session.user.mitraId)
         watchdog.schedule(session.accessToken)
         if (!cancelled)
           setState({ status: "authenticated", user: session.user })
         boot.settle({ status: "authenticated", user: session.user })
+      } else if (result.kind === "expired") {
+        // Expired during boot: trigger session expired flow with message
+        handleExpired()
+        boot.settle({ status: "anonymous", user: null })
       } else {
+        // Transient during boot: treat as anonymous, watchdog will retry
         if (!cancelled) setState({ status: "anonymous", user: null })
         boot.settle({ status: "anonymous", user: null })
       }
@@ -135,7 +163,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true
     }
-  }, [boot, watchdog])
+  }, [boot, watchdog, handleExpired])
 
   useEffect(() => {
     setOnSessionExpired(handleExpired)
@@ -207,6 +235,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await authApi.logout().catch(() => undefined)
     setAccessToken(null)
     flushSync(() => setState({ status: "anonymous", user: null }))
+    // Clear any session expiry message on manual logout
+    document.cookie = "sessionExpiredMessage=; path=/; max-age=0"
     // Clear only after the state flip has unmounted the admin pages: clearing
     // under mounted queries makes them refetch with no token (401 + refresh).
     queryClient.clear()
