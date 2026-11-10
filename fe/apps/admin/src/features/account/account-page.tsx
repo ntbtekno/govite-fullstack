@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react"
 import { SECURITY_POLICY } from "@app/contracts"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
+import { ApiError } from "@/lib/api-client"
 import {
   Avatar,
   AvatarFallback,
@@ -45,6 +46,17 @@ export function AccountPage() {
   const password = useMutation({
     mutationFn: accountApi.changePassword,
     onSuccess: () => toast.success("Password changed"),
+    onError: (err) => {
+      if (err instanceof ApiError && err.code === "INVALID_CREDENTIALS") {
+        toast.error("Password saat ini salah.")
+      } else if (err instanceof ApiError && err.code === "VALIDATION_ERROR") {
+        toast.error("Validasi gagal", { description: err.messageInd })
+      } else {
+        toast.error("Gagal mengubah password.", {
+          description: "Coba lagi.",
+        })
+      }
+    },
   })
   const sessions = useQuery({
     queryKey: ["account", "sessions"],
@@ -201,7 +213,7 @@ export function AccountPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <form onSubmit={changePassword} className="grid gap-4">
+            <form onSubmit={changePassword} className="grid gap-4" data-testid="password-form">
               <div className="grid gap-2">
                 <Label htmlFor="currentPassword">Current password</Label>
                 <Input

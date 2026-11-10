@@ -44,6 +44,8 @@ function watch(page: Page) {
     // A signed-out visit probes the session with POST /auth/refresh and gets
     // 401 by design; that is the only expected failure.
     if (path === "/api/v1/auth/refresh" && r.status() === 401) return
+    // Wrong current password on change-password returns 401 INVALID_CREDENTIALS by design.
+    if (path === "/api/v1/account/password" && r.status() === 401) return
     // In e2e test environment without MySQL configured, reports endpoints answer
     // 503 REPORTS_UNAVAILABLE by design.
     if (
@@ -500,6 +502,47 @@ test("app loader shows during delayed session probe on reload", async ({
 
   // Verify the loader is gone
   await expect(page.getByTestId("app-loader")).toBeHidden()
+
+  expect(problems).toEqual([])
+})
+
+// Proves the password change form shows error toast when current password is wrong.
+test("password change shows error toast for wrong current password", async ({
+  page,
+}) => {
+  const problems = watch(page)
+  await page.goto("/login")
+  await page.getByLabel("Username atau Email").fill(email)
+  await page.getByLabel("Password").fill(password)
+  await page.getByRole("textbox", { name: "Captcha" }).fill(captcha)
+  await page.getByRole("button", { name: "Sign in" }).click()
+  await expect(page).toHaveURL(/\/admin\/dashboard/)
+
+  // Navigate to Account page via user dropdown menu
+  await page.getByRole("button", { name: /Super Admin/ }).click()
+  // Wait for dropdown content to be visible, then click Account menuitem
+  await page.getByRole("menuitem", { name: "Account" }).click()
+  await expect(page).toHaveURL(/\/admin\/account$/)
+  await expect(page.getByRole("heading", { level: 1, name: "Account" })).toBeVisible()
+
+  // Try to change password with wrong current password
+  await page.getByLabel("Current password").fill("WrongPassword123!")
+  await page.getByLabel("New password").fill("NewPassword123!")
+  await page.getByRole("button", { name: "Change password" }).click()
+
+  // Error toast should appear
+  await expect(page.getByText("Password saat ini salah.")).toBeVisible({ timeout: 5000 })
+
+  // Verify password was not changed by signing out and signing in again with old password
+  await page.getByRole("button", { name: /Super Admin/ }).click()
+  await page.getByRole("menuitem", { name: "Log out" }).click()
+  await expect(page).toHaveURL(/\/login$/)
+
+  await page.getByLabel("Username atau Email").fill(email)
+  await page.getByLabel("Password").fill(password) // original password still works
+  await page.getByRole("textbox", { name: "Captcha" }).fill(captcha)
+  await page.getByRole("button", { name: "Sign in" }).click()
+  await expect(page).toHaveURL(/\/admin\/dashboard/)
 
   expect(problems).toEqual([])
 })
