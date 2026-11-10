@@ -1,3 +1,17 @@
+@keyframes app-loader-bar {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
+}
+
+.app-loader-bar {
+  background: linear-gradient(90deg, #0184ba, #60c6ec);
+  animation: app-loader-bar 1.2s ease-in-out infinite;
+}
+
 /* Rekanara palette. @app/ui maps these variables to Tailwind tokens;
    each app owns its own values. */
 :root {

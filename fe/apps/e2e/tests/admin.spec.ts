@@ -202,10 +202,9 @@ test("sign in as mitra via /login-mitra", async ({ page }) => {
   await page.getByRole("button", { name: "Sign in" }).click()
   await expect(page).toHaveURL(/\/admin\/dashboard/)
 
-  // Users is visible (users.view); Superadmin-only pages are not.
-  await expect(
-    page.getByRole("link", { name: "Users" })
-  ).toBeVisible()
+  // Users is hidden for a mitra session too (own data lives on Account);
+  // Superadmin-only pages are not shown either.
+  await expect(page.getByRole("link", { name: "Users" })).toHaveCount(0)
   await expect(page.getByRole("link", { name: "Roles" })).toHaveCount(0)
   await expect(page.getByRole("link", { name: "Settings" })).toHaveCount(0)
   await expect(page.getByRole("link", { name: "Mitra" })).toHaveCount(0)
@@ -236,9 +235,11 @@ test("mitra logout returns to /login-mitra", async ({ page }) => {
   expect(problems).toEqual([])
 })
 
-// A mitra user only sees itself, so the Users menu must open that user's own
-// detail page (id from the auth context), never the user list.
-test("mitra Users menu opens its own detail page", async ({ page }) => {
+// A mitra session has no Users menu at all (own data lives on the Account
+// page) and cannot open any user detail URL directly.
+test("mitra cannot see Users menu and is redirected from user detail", async ({
+  page,
+}) => {
   const problems = watch(page)
   await page.goto("/login-mitra")
   await page.getByLabel("Kode Mitra").fill(mitraKode)
@@ -248,36 +249,36 @@ test("mitra Users menu opens its own detail page", async ({ page }) => {
   await page.getByRole("button", { name: "Sign in" }).click()
   await expect(page).toHaveURL(/\/admin\/dashboard/)
 
-  await page.getByRole("link", { name: "Users" }).click()
+  // (a) the Users menu is absent for the mitra session
+  await expect(page.getByRole("link", { name: "Users" })).toHaveCount(0)
 
-  // The detail route for the signed-in user, not the list.
-  await expect(page).toHaveURL(
-    /\/admin\/administration\/users\/[0-9a-f-]{36}$/
+  // (b) a direct visit to a user detail URL (any id) redirects to the dashboard
+  await page.goto(
+    "/admin/administration/users/22222222-2222-4222-8222-222222222222"
   )
-  await expect(page.getByText("User detail")).toBeVisible()
-  await expect(page.getByLabel("Username")).toHaveValue(mitraUsername)
-  // The list's heading and "Add user" action are absent on the detail page.
-  await expect(
-    page.getByRole("heading", { level: 1, name: "Users" })
-  ).toHaveCount(0)
-  await expect(page.getByRole("button", { name: "Add user" })).toHaveCount(0)
+  await expect(page).toHaveURL(/\/admin\/dashboard$/)
 
   expect(problems).toEqual([])
 })
 
-// The Superadmin keeps the user list: its Users menu must not be redirected to
-// a detail page.
-test("Superadmin Users menu keeps the user list", async ({ page }) => {
+// The Superadmin keeps the Users menu and can still open a user detail page.
+test("Superadmin keeps Users menu and opens a user detail page", async ({
+  page,
+}) => {
   const problems = watch(page)
   await signIn(page)
 
   await page.getByRole("link", { name: "Users" }).click()
-
   await expect(page).toHaveURL(/\/admin\/administration\/users$/)
   await expect(
     page.getByRole("heading", { level: 1, name: "Users" })
   ).toBeVisible()
   await expect(page.getByRole("button", { name: "Add user" })).toBeVisible()
+
+  // Open the first user's detail page; the Superadmin is not redirected.
+  await page.getByRole("link", { name: "View" }).first().click()
+  await expect(page).toHaveURL(/\/admin\/administration\/users\/[^/]+$/)
+  await expect(page.getByText("User detail")).toBeVisible()
 
   expect(problems).toEqual([])
 })
@@ -407,9 +408,9 @@ test("expired Superadmin session lands on /login", async ({ page }) => {
   expect(problems).toEqual([])
 })
 
-// Proves the page skeleton is shown during boot / pending loading when session
-// resolution is delayed, without flashing a blank white page.
-test("page skeleton is shown during delayed session boot on reload", async ({
+// Proves pages reliably restore their real content on the same URL after reload
+// even when the boot session probe is delayed.
+test("pages restore real content at same URL after delayed reload", async ({
   page,
 }) => {
   const problems = watch(page)
@@ -421,25 +422,84 @@ test("page skeleton is shown during delayed session boot on reload", async ({
   await page.getByRole("button", { name: "Sign in" }).click()
   await expect(page).toHaveURL(/\/admin\/dashboard/)
 
+  // 1. Reload on /admin/billing stays on billing and restores real content
   await page.getByRole("link", { name: "Billing Tagihan" }).click()
   await expect(page).toHaveURL(/\/admin\/billing$/)
 
-  // Hold the boot session probe (/api/v1/auth/refresh and /api/v1/auth/me) for 1s
   await page.route(/\/api\/v1\/auth\/(refresh|me)/, async (route) => {
     await new Promise((r) => setTimeout(r, 1000))
     await route.continue()
   })
 
-  // Trigger reload: during the 1s delay, the skeleton with testid="page-skeleton" must be visible
-  const reloadPromise = page.reload()
-  await expect(page.getByTestId("page-skeleton")).toBeVisible()
-  await reloadPromise
-
-  // After the probe finishes, the real page content is rendered and URL stays on billing
+  await page.reload()
   await expect(page).toHaveURL(/\/admin\/billing$/)
   await expect(
     page.getByRole("heading", { level: 1, name: "Billing Tagihan" })
   ).toBeVisible()
+
+  // 2. Reload on /admin/payment-history stays on payment history and restores real content
+  await page.getByRole("link", { name: "History Payment" }).click()
+  await expect(page).toHaveURL(/\/admin\/payment-history$/)
+
+  await page.reload()
+  await expect(page).toHaveURL(/\/admin\/payment-history$/)
+  await expect(
+    page.getByRole("heading", { level: 1, name: "History Payment" })
+  ).toBeVisible()
+
+  expect(problems).toEqual([])
+})
+
+// Proves the AppLoader is shown while the boot session probe is in flight
+// and disappears once the session is restored.
+test("app loader shows during delayed session probe on reload", async ({
+  page,
+}) => {
+  const problems = watch(page)
+  await page.goto("/login-mitra")
+  await page.getByLabel("Kode Mitra").fill(mitraKode)
+  await page.getByLabel("Username atau Email").fill(mitraUsername)
+  await page.getByLabel("Password").fill(mitraPassword)
+  await page.getByRole("textbox", { name: "Captcha" }).fill(captcha)
+  await page.getByRole("button", { name: "Sign in" }).click()
+  await expect(page).toHaveURL(/\/admin\/dashboard/)
+
+  // Navigate to a mitra report page
+  await page.getByRole("link", { name: "Billing Tagihan" }).click()
+  await expect(page).toHaveURL(/\/admin\/billing$/)
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Billing Tagihan" })
+  ).toBeVisible()
+
+  // Intercept the session probe and hold it
+  let releaseProbe: () => void
+  const probeHeld = new Promise<void>((resolve) => {
+    releaseProbe = resolve
+  })
+
+  await page.route(/\/api\/v1\/auth\/(refresh|me)/, async (route) => {
+    await probeHeld
+    await route.continue()
+  })
+
+  // Reload the page - this should show the AppLoader
+  const reloadPromise = page.reload()
+
+  // Wait for the loader to appear
+  await expect(page.getByTestId("app-loader")).toBeVisible({ timeout: 5000 })
+
+  // Release the probe and wait for reload to complete
+  releaseProbe!()
+  await reloadPromise
+
+  // Verify the real content is restored at the same URL
+  await expect(page).toHaveURL(/\/admin\/billing$/)
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Billing Tagihan" })
+  ).toBeVisible()
+
+  // Verify the loader is gone
+  await expect(page.getByTestId("app-loader")).toBeHidden()
 
   expect(problems).toEqual([])
 })

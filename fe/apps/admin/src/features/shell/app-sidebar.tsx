@@ -126,14 +126,11 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
   const logoUrl = settings.data?.logoUrl ?? null
   const visible = (items: Guarded[]) =>
     items.filter((i) => !i.permission || can(...i.permission))
-  // A mitra user only sees itself, so its Users menu opens that user's own
-  // detail page instead of the list. Everyone else keeps the list.
-  const usersUrl =
-    user?.mitraId && user.id
-      ? `/admin/administration/users/${user.id}`
-      : "/admin/administration/users"
-  const adminItems = visible(administration).map((i) =>
-    i.title === "Users" ? { ...i, url: usersUrl } : i
+  // A mitra session must not reach the user detail page at all: its own data
+  // lives on the Account page, so the Users item is hidden entirely. A
+  // non-mitra session keeps the item pointing at the user list.
+  const adminItems = visible(administration).filter(
+    (i) => !(i.title === "Users" && user?.mitraId)
   )
   // The reporting group exists only for a mitra session.
   const reportItems = user?.mitraId ? visible(reports) : []

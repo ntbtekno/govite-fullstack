@@ -60,7 +60,7 @@ afterEach(() => {
 })
 
 describe("AppSidebar Users menu", () => {
-  it("points a mitra user to its own detail page", async () => {
+  it("hides the Users item for a mitra user (own data lives on Account)", async () => {
     state.user = {
       id: "22222222-2222-4222-8222-222222222222",
       mitraId: "33333333-3333-4333-8333-333333333333",
@@ -68,9 +68,7 @@ describe("AppSidebar Users menu", () => {
     state.granted = new Set(["users.view"])
     await renderSidebar()
 
-    expect(usersLink()?.getAttribute("data-to")).toBe(
-      "/admin/administration/users/22222222-2222-4222-8222-222222222222"
-    )
+    expect(usersLink()).toBeUndefined()
   })
 
   it("keeps Superadmin (no mitra) pointed at the user list", async () => {
