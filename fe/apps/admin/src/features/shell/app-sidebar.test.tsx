@@ -18,7 +18,13 @@ vi.mock("@/lib/auth-context", () => ({
 }))
 
 vi.mock("@/lib/public-settings", () => ({
-  usePublicSettings: () => ({ data: { appName: "Rekanara", logoUrl: null } }),
+  usePublicSettings: () => ({
+    data: {
+      appName: "Portal Management Virtual Account",
+      tagline: "Bank NTB Syariah",
+      logoUrl: "/images/logo-bank-ntb-syariah.webp",
+    },
+  }),
 }))
 
 vi.mock("@/features/shell/nav-user", () => ({ NavUser: () => null }))
@@ -139,5 +145,19 @@ describe("AppSidebar Laporan group", () => {
     expect(reportLink("Billing Tagihan")).toBeUndefined()
     expect(reportLink("History Payment")).toBeUndefined()
     expect(document.body.textContent).not.toContain("Laporan")
+  })
+})
+
+describe("AppSidebar brand", () => {
+  it("shows the correct app name and tagline with logo", async () => {
+    state.user = { id: "11111111-1111-4111-8111-111111111111", mitraId: null }
+    state.granted = new Set(["users.view"])
+    await renderSidebar()
+
+    expect(document.body.textContent).toContain("Portal Management Virtual Account")
+    expect(document.body.textContent).toContain("Bank NTB Syariah")
+    const logo = document.querySelector("img[alt='Bank NTB Syariah']")
+    expect(logo).not.toBeNull()
+    expect(logo?.getAttribute("src")).toBe("/images/logo-bank-ntb-syariah.webp")
   })
 })

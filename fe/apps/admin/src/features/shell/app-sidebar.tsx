@@ -11,7 +11,6 @@ import {
   SettingsIcon,
   ShieldIcon,
   UsersIcon,
-  TerminalIcon,
   WebhookIcon,
 } from "lucide-react"
 import type { Resource, Action } from "@app/contracts"
@@ -122,8 +121,9 @@ const reports: Guarded[] = [
 export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
   const { can, user } = useAuth()
   const settings = usePublicSettings()
-  const appName = settings.data?.appName ?? "Rekanara"
-  const logoUrl = settings.data?.logoUrl ?? null
+  const appName = settings.data?.appName ?? "Portal Management Virtual Account"
+  const appTagline = settings.data?.tagline ?? "Bank NTB Syariah"
+  const logoUrl = settings.data?.logoUrl ?? "/images/logo-bank-ntb-syariah.webp"
   const visible = (items: Guarded[]) =>
     items.filter((i) => !i.permission || can(...i.permission))
   // A mitra session must not reach the user detail page at all: its own data
@@ -142,20 +142,16 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" asChild>
               <Link to="/admin/dashboard">
-                <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-                  {logoUrl ? (
-                    <img
-                      src={logoUrl}
-                      alt=""
-                      className="size-5 object-contain"
-                    />
-                  ) : (
-                    <TerminalIcon className="size-4" />
-                  )}
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/80 dark:bg-slate-800/80 ring-1 ring-slate-200 dark:ring-slate-700">
+                  <img
+                    src={logoUrl}
+                    alt="Bank NTB Syariah"
+                    className="h-[36px] w-auto object-contain"
+                  />
                 </div>
                 <div className="grid flex-1 text-left text-sm leading-tight">
                   <span className="truncate font-medium">{appName}</span>
-                  <span className="truncate text-xs">Admin</span>
+                  <span className="truncate text-xs">{appTagline}</span>
                 </div>
               </Link>
             </SidebarMenuButton>
