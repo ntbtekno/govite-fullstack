@@ -117,6 +117,18 @@ var Security = struct {
 	CaptchaTTL:            2 * time.Minute,
 }
 
+// InitSecurity initializes the Security limits with custom token TTLs.
+// Call this once at application startup. If accessTTL or refreshTTL is <= 0,
+// the defaults (15m / 7d) are kept.
+func InitSecurity(accessTTL, refreshTTL time.Duration) {
+	if accessTTL > 0 {
+		Security.AccessTokenTTL = accessTTL
+	}
+	if refreshTTL > 0 {
+		Security.RefreshTokenTTL = refreshTTL
+	}
+}
+
 // FormatDuration renders "30 minutes", "1 day", "7 days" for emails.
 func FormatDuration(d time.Duration) string {
 	units := []struct {

@@ -2,10 +2,12 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"net/mail"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -22,6 +24,8 @@ type Config struct {
 	ReportsMySQLDSN      string
 	JWTSecret            string
 	RefreshPepper        string
+	AccessTokenTTL       time.Duration
+	RefreshTokenTTL      time.Duration
 	SMTPHost             string
 	SMTPPort             int
 	SMTPUsername         string
@@ -108,6 +112,20 @@ func Load() (Config, error) {
 		}
 		return v
 	}
+	duration := func(key string, def time.Duration) time.Duration {
+		v := str(key, "")
+		if v == "" {
+			return def
+		}
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			// Invalid duration: log warning via slog (if available) and use default.
+			// We don't add to errs because invalid TTL must not prevent server boot.
+			slog.Warn("invalid token TTL, using default", "key", key, "value", v, "default", def, "err", err)
+			return def
+		}
+		return d
+	}
 
 	c := Config{
 		Env:                        str("APP_ENV", "development"),
@@ -118,6 +136,8 @@ func Load() (Config, error) {
 		ReportsMySQLDSN:            str("REPORTS_MYSQL_DSN", ""),
 		JWTSecret:                  required("JWT_ACCESS_SECRET"),
 		RefreshPepper:              required("REFRESH_TOKEN_PEPPER"),
+		AccessTokenTTL:             duration("ACCESS_TOKEN_TTL", 15*time.Minute),
+		RefreshTokenTTL:            duration("REFRESH_TOKEN_TTL", 7*24*time.Hour),
 		SMTPHost:                   str("SMTP_HOST", ""),
 		SMTPPort:                   num("SMTP_PORT", 1025),
 		SMTPUsername:               str("SMTP_USERNAME", ""),

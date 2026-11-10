@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestProductionRejectsExamplePlaceholders(t *testing.T) {
@@ -18,6 +19,69 @@ func TestProductionRejectsExamplePlaceholders(t *testing.T) {
 	_, err := Load()
 	if err == nil || !strings.Contains(err.Error(), "JWT_ACCESS_SECRET still has") || !strings.Contains(err.Error(), "REFRESH_TOKEN_PEPPER still has") {
 		t.Fatalf("production must reject placeholders, got %v", err)
+	}
+}
+
+// TestTokenTTLDefaults verifies that when ACCESS_TOKEN_TTL and REFRESH_TOKEN_TTL
+// are not set, the defaults (15m / 7d) are used.
+func TestTokenTTLDefaults(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://x")
+	t.Setenv("JWT_ACCESS_SECRET", "a-very-long-secret-that-is-at-least-32-bytes")
+	t.Setenv("REFRESH_TOKEN_PEPPER", "a-pepper-16-bytes-min")
+	// Ensure TTL env vars are not set
+	t.Setenv("ACCESS_TOKEN_TTL", "")
+	t.Setenv("REFRESH_TOKEN_TTL", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+	if cfg.AccessTokenTTL != 15*time.Minute {
+		t.Errorf("AccessTokenTTL = %v, want 15m", cfg.AccessTokenTTL)
+	}
+	if cfg.RefreshTokenTTL != 7*24*time.Hour {
+		t.Errorf("RefreshTokenTTL = %v, want 168h", cfg.RefreshTokenTTL)
+	}
+}
+
+// TestTokenTTLValid verifies that valid duration strings are parsed correctly.
+func TestTokenTTLValid(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://x")
+	t.Setenv("JWT_ACCESS_SECRET", "a-very-long-secret-that-is-at-least-32-bytes")
+	t.Setenv("REFRESH_TOKEN_PEPPER", "a-pepper-16-bytes-min")
+	t.Setenv("ACCESS_TOKEN_TTL", "60s")
+	t.Setenv("REFRESH_TOKEN_TTL", "150s")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+	if cfg.AccessTokenTTL != 60*time.Second {
+		t.Errorf("AccessTokenTTL = %v, want 60s", cfg.AccessTokenTTL)
+	}
+	if cfg.RefreshTokenTTL != 150*time.Second {
+		t.Errorf("RefreshTokenTTL = %v, want 150s", cfg.RefreshTokenTTL)
+	}
+}
+
+// TestTokenTTLInvalid verifies that invalid duration strings fall back to defaults
+// and log a warning (we can't easily test the log, but we verify the default is used).
+func TestTokenTTLInvalid(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://x")
+	t.Setenv("JWT_ACCESS_SECRET", "a-very-long-secret-that-is-at-least-32-bytes")
+	t.Setenv("REFRESH_TOKEN_PEPPER", "a-pepper-16-bytes-min")
+	t.Setenv("ACCESS_TOKEN_TTL", "not-a-duration")
+	t.Setenv("REFRESH_TOKEN_TTL", "also-invalid")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() should not fail on invalid TTL, got %v", err)
+	}
+	if cfg.AccessTokenTTL != 15*time.Minute {
+		t.Errorf("AccessTokenTTL = %v, want default 15m", cfg.AccessTokenTTL)
+	}
+	if cfg.RefreshTokenTTL != 7*24*time.Hour {
+		t.Errorf("RefreshTokenTTL = %v, want default 168h", cfg.RefreshTokenTTL)
 	}
 }
 
