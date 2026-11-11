@@ -16,10 +16,44 @@ const (
 	defaultPageSize = 10
 	maxPageSize     = 100
 	dateLayout      = "2006-01-02"
+	maxRangeDays    = 92
 )
 
 type Handler struct {
 	Svc *application.Service
+}
+
+type dashboardQuery struct {
+	From string `query:"from"`
+	To   string `query:"to"`
+}
+
+func (q dashboardQuery) parse() (*time.Time, *time.Time, error) {
+	var from, to *time.Time
+	if q.From != "" {
+		t, err := time.Parse(dateLayout, q.From)
+		if err != nil {
+			return nil, nil, httpx.Validation("from: must be YYYY-MM-DD")
+		}
+		from = &t
+	}
+	if q.To != "" {
+		t, err := time.Parse(dateLayout, q.To)
+		if err != nil {
+			return nil, nil, httpx.Validation("to: must be YYYY-MM-DD")
+		}
+		to = &t
+	}
+	if from != nil && to != nil && from.After(*to) {
+		return nil, nil, httpx.Validation("from: cannot be after to")
+	}
+	if from != nil && to != nil {
+		days := int(to.Sub(*from).Hours()/24) + 1
+		if days > maxRangeDays {
+			return nil, nil, httpx.Validation("range: cannot exceed 92 days")
+		}
+	}
+	return from, to, nil
 }
 
 type listQuery struct {
@@ -126,7 +160,15 @@ func (h Handler) Routes(g rbac.Guarded) {
 // filled for a mitra principal.
 func (h Handler) MeRoutes(r fiber.Router) {
 	r.Get("/dashboard/summary", func(c *fiber.Ctx) error {
-		sum, err := h.Svc.DashboardSummary(c.UserContext())
+		var q dashboardQuery
+		if err := httpx.Query(c, &q); err != nil {
+			return err
+		}
+		from, to, err := q.parse()
+		if err != nil {
+			return err
+		}
+		sum, err := h.Svc.DashboardSummary(c.UserContext(), from, to)
 		if err != nil {
 			return err
 		}

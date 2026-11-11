@@ -6260,9 +6260,39 @@
     "/api/v1/dashboard/summary": {
       "get": {
         "operationId": "DashboardController_summary",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Dashboard summary: last successful login and, for a mitra caller, the current month transactions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error: from/to must be YYYY-MM-DD, from must not be after to, range must not exceed 92 days",
             "content": {
               "application/json": {
                 "schema": {

@@ -864,3 +864,73 @@ test("Superadmin dashboard shows no transaction chart card", async ({ page }) =>
 
   expect(problems).toEqual([])
 })
+
+// Proves the dashboard date range is draft/apply: editing the inputs does not
+// refetch, clicking "Terapkan" refetches once with the chosen from/to, and the
+// bars and headline total follow the applied range.
+test("mitra dashboard date range applies on demand and changes bars and total", async ({
+  page,
+}) => {
+  const problems = watch(page)
+
+  // Serve the summary from the requested bounds so the chart mirrors the query.
+  const summaryFor = (from: string, to: string) => {
+    const start = new Date(from + "T00:00:00Z")
+    const end = new Date(to + "T00:00:00Z")
+    const days: { date: string; count: number }[] = []
+    for (let t = start.getTime(); t <= end.getTime(); t += 24 * 60 * 60 * 1000) {
+      days.push({ date: new Date(t).toISOString().split("T")[0], count: 1 })
+    }
+    return {
+      lastLogin: null,
+      monthlyTransactions: {
+        unavailable: false,
+        total: days.length,
+        days,
+      },
+    }
+  }
+
+  const summaryRequests: string[] = []
+  await page.route("**/api/v1/dashboard/summary**", async (route) => {
+    const url = new URL(route.request().url())
+    summaryRequests.push(`${url.searchParams.get("from") ?? ""}..${url.searchParams.get("to") ?? ""}`)
+    const from = url.searchParams.get("from")
+    const to = url.searchParams.get("to")
+    const body = from && to ? summaryFor(from, to) : summaryFor("2026-11-01", "2026-11-30")
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ data: body }),
+    })
+  })
+
+  await signInMitra(page)
+
+  const chartCard = page.getByTestId("transaksi-bulan-ini-card")
+  await expect(chartCard).toBeVisible()
+  await expect(page.getByTestId("transaksi-bar")).toHaveCount(30)
+
+  const callsBefore = summaryRequests.length
+
+  // Type a 5-day range (2026-11-05..2026-11-09).
+  await page.getByLabel("Dari").fill("2026-11-05")
+  await page.getByLabel("Sampai").fill("2026-11-09")
+
+  // Editing draft inputs must not refetch.
+  expect(summaryRequests.length).toBe(callsBefore)
+
+  // Apply: exactly one refetch carrying the chosen bounds.
+  await page.getByTestId("dashboard-apply-btn").click()
+  await expect(page.getByTestId("transaksi-bar")).toHaveCount(5)
+  expect(summaryRequests[summaryRequests.length - 1]).toBe("2026-11-05..2026-11-09")
+
+  // The headline total follows the applied range (5 days, count 1 each).
+  await expect(chartCard).toContainText("5 transaksi")
+
+  // "Bulan ini" restores the running month (30 bars again).
+  await page.getByRole("button", { name: "Bulan ini" }).click()
+  await expect(page.getByTestId("transaksi-bar")).toHaveCount(30)
+
+  expect(problems).toEqual([])
+})

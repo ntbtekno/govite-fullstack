@@ -70,8 +70,10 @@ func (s *Service) Payments(ctx context.Context, f domain.Filter) ([]domain.Payme
 // transaction section is only built for a mitra caller: a caller without a
 // mitra gets nil, and a missing reports database gets Unavailable (mirroring
 // the 503 REPORTS_UNAVAILABLE the report pages show) instead of failing the
-// whole response.
-func (s *Service) DashboardSummary(ctx context.Context) (Dashboard, error) {
+// whole response. from/to are optional calendar date bounds in Asia/Makassar;
+// when both are nil the running month is used. One-sided bounds default to the
+// running month edges.
+func (s *Service) DashboardSummary(ctx context.Context, from, to *time.Time) (Dashboard, error) {
 	out := Dashboard{}
 
 	if s.LastLogin != nil {
@@ -86,14 +88,16 @@ func (s *Service) DashboardSummary(ctx context.Context) (Dashboard, error) {
 		}
 	}
 
-	out.Monthly = s.monthly(ctx)
+	out.Monthly = s.monthly(ctx, from, to)
 	return out, nil
 }
 
 // monthly builds the mitra-only monthly section. It never errors: an absent
 // mitra yields nil, an absent reports database yields Unavailable, and a read
-// failure degrades to Unavailable as well.
-func (s *Service) monthly(ctx context.Context) *domain.MonthlyTransactions {
+// failure degrades to Unavailable as well. from/to are optional bounds; when
+// both are nil the running month (Asia/Makassar) is used. One-sided bounds
+// default to the running month edges.
+func (s *Service) monthly(ctx context.Context, from, to *time.Time) *domain.MonthlyTransactions {
 	p := kernel.PrincipalFrom(ctx)
 	if p.MitraID == "" {
 		return nil
@@ -106,19 +110,36 @@ func (s *Service) monthly(ctx context.Context) *domain.MonthlyTransactions {
 		return &domain.MonthlyTransactions{Unavailable: true, Days: []domain.DailyPoint{}}
 	}
 
-	first, lastDay, monthDays := monthWindow(time.Now().In(makassar))
-	from := first
-	to := lastDay.AddDate(0, 0, 1)
+	now := time.Now().In(makassar)
+	firstOfMonth, lastOfMonth, _ := monthWindow(now)
 
-	counts, err := s.Repo.MonthlyTransactionCounts(ctx, domain.Filter{MitraKode: kode}, from, to)
+	// Determine effective bounds
+	var effFrom, effTo time.Time
+	if from != nil {
+		effFrom = time.Date(from.Year(), from.Month(), from.Day(), 0, 0, 0, 0, makassar)
+	} else {
+		effFrom = firstOfMonth
+	}
+	if to != nil {
+		effTo = time.Date(to.Year(), to.Month(), to.Day(), 0, 0, 0, 0, makassar)
+	} else {
+		effTo = lastOfMonth
+	}
+
+	// to is inclusive, so add one day for the exclusive upper bound in the query
+	queryTo := effTo.AddDate(0, 0, 1)
+
+	daysInRange := int(effTo.Sub(effFrom).Hours()/24) + 1
+
+	counts, err := s.Repo.MonthlyTransactionCounts(ctx, domain.Filter{MitraKode: kode}, effFrom, queryTo)
 	if err != nil {
 		return &domain.MonthlyTransactions{Unavailable: true, Days: []domain.DailyPoint{}}
 	}
 
-	days := make([]domain.DailyPoint, 0, monthDays)
+	days := make([]domain.DailyPoint, 0, daysInRange)
 	var total int64
-	for d := 1; d <= monthDays; d++ {
-		date := time.Date(first.Year(), first.Month(), d, 0, 0, 0, 0, time.UTC)
+	for d := 0; d < daysInRange; d++ {
+		date := effFrom.AddDate(0, 0, d)
 		key := date.Format("2006-01-02")
 		n := counts[key]
 		total += n
