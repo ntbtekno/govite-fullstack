@@ -65,29 +65,32 @@ export function PaymentHistorySkeleton({
 
       {/* Table matching exact Payment History columns and classes:
           TableHeader:
-          - Tanggal Transaksi
-          - No VA
-          - Referensi
-          - Keterangan (dominant width)
-          - text-right: Nominal (right aligned)
-          - Status (right aligned next to edge)
+          - (chevron, w-10)
+          - Tanggal Transaksi (w-44)
+          - No VA / Referensi
+          - ID Transaksi
+          - text-right: Nominal (w-32)
+          - Status (w-24)
           Rows: 10 rows matching PAGE_SIZE = 10 */}
-      <div className="overflow-x-auto rounded-xl border bg-card">
+      <div className="w-full min-w-0 rounded-xl border bg-card [&_[data-slot=table-container]]:overflow-x-visible [&_[data-slot=table]]:table-fixed">
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Tanggal Transaksi</TableHead>
-              <TableHead>No VA</TableHead>
-              <TableHead>Referensi</TableHead>
-              <TableHead>Keterangan</TableHead>
-              <TableHead className="text-right">Nominal</TableHead>
-              <TableHead>Status</TableHead>
+              <TableHead className="w-10" aria-hidden />
+              <TableHead className="w-44">Tanggal Transaksi</TableHead>
+              <TableHead>No VA / Referensi</TableHead>
+              <TableHead>ID Transaksi</TableHead>
+              <TableHead className="w-32 text-right">Nominal</TableHead>
+              <TableHead className="w-24">Status</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {Array.from({ length: 10 }).map((_, idx) => (
               <TableRow key={idx}>
-                <TableCell className="font-mono text-xs whitespace-nowrap">
+                <TableCell className="w-10">
+                  <Skeleton className="size-4 rounded-sm" />
+                </TableCell>
+                <TableCell className="font-mono text-xs">
                   <Skeleton className="h-4 w-36" />
                 </TableCell>
                 <TableCell className="font-mono text-xs">
@@ -96,14 +99,11 @@ export function PaymentHistorySkeleton({
                 <TableCell className="font-mono text-xs">
                   <Skeleton className="h-4 w-28" />
                 </TableCell>
-                <TableCell className="w-full">
-                  <Skeleton className="h-4 w-4/5" />
-                </TableCell>
-                <TableCell className="text-right whitespace-nowrap">
+                <TableCell className="text-right">
                   <Skeleton className="ml-auto h-4 w-24" />
                 </TableCell>
-                <TableCell className="text-right whitespace-nowrap">
-                  <Skeleton className="ml-auto h-5 w-16 rounded-full" />
+                <TableCell>
+                  <Skeleton className="h-5 w-16 rounded-full" />
                 </TableCell>
               </TableRow>
             ))}

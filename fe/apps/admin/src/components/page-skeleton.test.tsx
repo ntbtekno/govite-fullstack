@@ -47,10 +47,10 @@ describe("Skeleton components", () => {
       th.textContent?.trim()
     )
     expect(headers).toEqual([
+      "",
       "Tanggal Transaksi",
-      "No VA",
-      "Referensi",
-      "Keterangan",
+      "No VA / Referensi",
+      "ID Transaksi",
       "Nominal",
       "Status",
     ])

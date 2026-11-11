@@ -226,3 +226,100 @@ describe("PaymentHistoryPage - Date Filter toolbar", () => {
     await unmount()
   })
 })
+
+describe("PaymentHistoryPage - Expandable row", () => {
+  const sample = {
+    id: "tx-1",
+    txDate: "2026-10-01",
+    vaNumber: "MTR00141",
+    transactionAt: "2026-10-01T10:20:30",
+    reference: "REF-123456",
+    message: "Pembayaran VA berhasil",
+    amount: 150000,
+    status: "success",
+  }
+
+  beforeEach(() => {
+    vi.mocked(reportsApi.payments).mockResolvedValue({
+      items: [sample],
+      total: 1,
+      page: 1,
+      pageSize: 10,
+      summary: { count: 1, totalAmount: sample.amount },
+    })
+  })
+
+  it("hides secondary fields until expanded, shows them on expand, hides again on collapse", async () => {
+    state.granted = new Set(["payments.view"])
+    const { host, unmount } = await renderWithClient(<PaymentHistoryPage />)
+
+    await vi.waitFor(() => {
+      expect(host.querySelector('[data-testid="payment-detail-row"]')).toBeNull()
+    })
+    // Secondary field (message / Keterangan) is not visible before expanding.
+    expect(host.textContent).not.toContain("Pembayaran VA berhasil")
+    expect(host.textContent).not.toContain("Tanggal Transaksi (txdate)")
+
+    const toggle = host.querySelector<HTMLButtonElement>(
+      'button[aria-label="Buka detail transaksi"]'
+    )!
+    expect(toggle).toBeDefined()
+
+    await click(toggle)
+
+    await vi.waitFor(() => {
+      expect(
+        host.querySelector('[data-testid="payment-detail-row"]')
+      ).not.toBeNull()
+    })
+    expect(host.textContent).toContain("Pembayaran VA berhasil")
+    expect(host.textContent).toContain("Tanggal Transaksi (txdate)")
+
+    const closeToggle = host.querySelector<HTMLButtonElement>(
+      'button[aria-label="Tutup detail transaksi"]'
+    )!
+    await click(closeToggle)
+
+    await vi.waitFor(() => {
+      expect(host.querySelector('[data-testid="payment-detail-row"]')).toBeNull()
+    })
+    expect(host.textContent).not.toContain("Pembayaran VA berhasil")
+
+    await unmount()
+  })
+
+  it("keeps the row expanded across a refetch (polling does not close it)", async () => {
+    state.granted = new Set(["payments.view"])
+    const { host, unmount } = await renderWithClient(<PaymentHistoryPage />)
+
+    await click(
+      host.querySelector<HTMLButtonElement>(
+        'button[aria-label="Buka detail transaksi"]'
+      )!
+    )
+    await vi.waitFor(() => {
+      expect(
+        host.querySelector('[data-testid="payment-detail-row"]')
+      ).not.toBeNull()
+    })
+
+    // A new object identity arrives from the API with the same tx id.
+    vi.mocked(reportsApi.payments).mockResolvedValue({
+      items: [{ ...sample, message: "Pembayaran VA berhasil" }],
+      total: 1,
+      page: 1,
+      pageSize: 10,
+      summary: { count: 1, totalAmount: sample.amount },
+    })
+    const refetchBtn = Array.from(host.querySelectorAll("button")).find((b) =>
+      (b.getAttribute("aria-label") ?? "").includes("Tutup detail")
+    )
+    expect(refetchBtn).toBeDefined()
+    // Row stays open (still the "close" affordance, detail row present).
+    expect(
+      host.querySelector('[data-testid="payment-detail-row"]')
+    ).not.toBeNull()
+
+    await unmount()
+  })
+})

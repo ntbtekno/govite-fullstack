@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react"
+import { Fragment, useEffect, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { AlertCircleIcon } from "lucide-react"
+import { AlertCircleIcon, ChevronDownIcon, ChevronRightIcon } from "lucide-react"
 import { Input } from "@app/ui/components/input"
 import { Label } from "@app/ui/components/label"
 import { Button } from "@app/ui/components/button"
@@ -61,6 +61,11 @@ export function PaymentHistoryPage() {
   // Track if polling was stopped due to 429/503; user can re-enable by manual refresh
   const [pollingStopped, setPollingStopped] = useState(false)
 
+  // Expanded rows are keyed by transaction id (txid) so the 20s realtime poll
+  // never collapses a row the user opened. After each fetch, ids whose
+  // transaction left the page are dropped (see queryFn below).
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+
   const query = useQuery({
     queryKey: [
       "reports",
@@ -82,6 +87,14 @@ export function PaymentHistoryPage() {
         pageSize: PAGE_SIZE,
       })
       setUpdatedAt(new Date())
+      // Forget expanded rows whose transaction is no longer on this page, so
+      // the set does not grow unbounded across pagination and polling.
+      setExpandedIds((prev) => {
+        if (prev.size === 0) return prev
+        const visible = new Set(res.items.map((r) => r.id))
+        const next = new Set([...prev].filter((id) => visible.has(id)))
+        return next.size === prev.size ? prev : next
+      })
       return res
     },
     refetchInterval: tabVisible && !pollingStopped ? REFETCH_INTERVAL : false,
@@ -106,6 +119,18 @@ export function PaymentHistoryPage() {
   const summary = query.data?.summary ?? { count: total, totalAmount: 0 }
 
   const hasDateFilter = Boolean(fromDate || toDate)
+
+  const toggleExpanded = (id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }
 
   const handleResetDates = () => {
     setFromDate("")
@@ -249,16 +274,19 @@ export function PaymentHistoryPage() {
         )}
       </div>
 
-      <div className="overflow-x-auto rounded-xl border">
+      <div
+        className="w-full min-w-0 rounded-xl border [&_[data-slot=table-container]]:overflow-x-visible [&_[data-slot=table]]:table-fixed [&_[data-slot=table-cell]]:whitespace-normal! [&_[data-slot=table-head]]:whitespace-normal!"
+        data-testid="payment-table-wrapper"
+      >
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Tanggal Transaksi</TableHead>
-              <TableHead>No VA</TableHead>
-              <TableHead>Referensi</TableHead>
-              <TableHead>Keterangan</TableHead>
-              <TableHead className="text-right">Nominal</TableHead>
-              <TableHead>Status</TableHead>
+              <TableHead className="w-10" aria-label="Perluas" />
+              <TableHead className="w-44">Tanggal Transaksi</TableHead>
+              <TableHead>No VA / Referensi</TableHead>
+              <TableHead>ID Transaksi</TableHead>
+              <TableHead className="w-32 text-right">Nominal</TableHead>
+              <TableHead className="w-24">Status</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -304,28 +332,80 @@ export function PaymentHistoryPage() {
                   empty={items.length === 0}
                   emptyText="Tidak ada data"
                 />
-                {items.map((r) => (
-                  <TableRow key={r.id}>
-                    <TableCell className="font-mono text-xs whitespace-nowrap">
-                      {formatTransactionAt(r.transactionAt)}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs">
-                      {r.vaNumber}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs">
-                      {r.reference || "-"}
-                    </TableCell>
-                    <TableCell>{r.message || "-"}</TableCell>
-                    <TableCell className="text-right">
-                      {rupiah(r.amount)}
-                    </TableCell>
-                    <TableCell>
-                      <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-800">
-                        Berhasil
-                      </span>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {items.map((r) => {
+                  const expanded = expandedIds.has(r.id)
+                  const detailFields: { label: string; value: string }[] = [
+                    { label: "Keterangan", value: r.message || "-" },
+                    { label: "Tanggal Transaksi (txdate)", value: r.txDate || "-" },
+                    { label: "ID", value: r.id },
+                  ]
+                  return (
+                    <Fragment key={r.id}>
+                      <TableRow data-state={expanded ? "selected" : undefined}>
+                        <TableCell className="w-10 align-top">
+                          <button
+                            type="button"
+                            onClick={() => toggleExpanded(r.id)}
+                            aria-expanded={expanded}
+                            aria-label={
+                              expanded
+                                ? "Tutup detail transaksi"
+                                : "Buka detail transaksi"
+                            }
+                            className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          >
+                            {expanded ? (
+                              <ChevronDownIcon className="size-4" />
+                            ) : (
+                              <ChevronRightIcon className="size-4" />
+                            )}
+                          </button>
+                        </TableCell>
+                        <TableCell className="font-mono text-xs align-top">
+                          {formatTransactionAt(r.transactionAt)}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs break-all align-top">
+                          {r.vaNumber}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs break-all align-top">
+                          {r.reference || "-"}
+                        </TableCell>
+                        <TableCell className="text-right align-top">
+                          {rupiah(r.amount)}
+                        </TableCell>
+                        <TableCell className="align-top">
+                          <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-800">
+                            Berhasil
+                          </span>
+                        </TableCell>
+                      </TableRow>
+                      {expanded && (
+                        <TableRow
+                          data-testid="payment-detail-row"
+                          className="border-0 bg-muted/30 hover:bg-muted/30"
+                        >
+                          <TableCell colSpan={6} className="p-0">
+                            <dl className="grid gap-x-6 gap-y-1.5 px-4 py-3 sm:grid-cols-2">
+                              {detailFields.map((f) => (
+                                <div
+                                  key={f.label}
+                                  className="flex gap-2 text-xs"
+                                >
+                                  <dt className="w-48 shrink-0 text-muted-foreground">
+                                    {f.label}
+                                  </dt>
+                                  <dd className="min-w-0 break-all font-mono text-foreground">
+                                    {f.value}
+                                  </dd>
+                                </div>
+                              ))}
+                            </dl>
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </Fragment>
+                  )
+                })}
               </>
             )}
           </TableBody>

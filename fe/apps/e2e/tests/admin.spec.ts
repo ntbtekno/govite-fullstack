@@ -331,6 +331,95 @@ test("mitra report menus render and show unavailable state without reports DB", 
   expect(problems).toEqual([])
 })
 
+// Proves the History Payment table never scrolls horizontally at 1280px: the
+// secondary columns moved into a per-row expand, and the primary columns fit
+// the container width. Mock data is injected so the assertion does not depend
+// on the reports database being configured.
+test("History Payment has no horizontal scroll at 1280px and expands a row", async ({
+  page,
+}) => {
+  const problems = watch(page)
+  await page.setViewportSize({ width: 1280, height: 900 })
+
+  // Long values in the primary columns are the realistic overflow risk.
+  const longVa = "MTR0014123456789012345678901234567890"
+  const longRef = "REF-20260101-ABCDEFGHIJKLMNOPQRSTUVWXYZ-000001"
+  const mockItems = Array.from({ length: 3 }, (_, i) => ({
+    id: `tx-${i + 1}`,
+    txDate: "2026-01-01",
+    vaNumber: longVa,
+    transactionAt: "2026-01-01T08:15:30",
+    reference: `${longRef}-${i + 1}`,
+    message: "Pembayaran VA berhasil dengan keterangan panjang sekali",
+    amount: 125000 + i,
+    status: "success",
+  }))
+  await page.route("**/api/v1/reports/payments**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        data: {
+          items: mockItems,
+          total: mockItems.length,
+          page: 1,
+          pageSize: 10,
+          summary: { count: mockItems.length, totalAmount: 375003 },
+        },
+      }),
+    })
+  })
+
+  await page.goto("/login-mitra")
+  await page.getByLabel("Kode Mitra").fill(mitraKode)
+  await page.getByLabel("Username atau Email").fill(mitraUsername)
+  await page.getByLabel("Password").fill(mitraPassword)
+  await page.getByRole("textbox", { name: "Captcha" }).fill(captcha)
+  await page.getByRole("button", { name: "Sign in" }).click()
+  await expect(page).toHaveURL(/\/admin\/dashboard/)
+
+  await page.getByRole("link", { name: "History Payment" }).click()
+  await expect(page).toHaveURL(/\/admin\/payment-history$/)
+  await expect(
+    page.getByRole("heading", { level: 1, name: "History Payment" })
+  ).toBeVisible()
+
+  // Wait for the mocked rows to render.
+  await expect(page.getByText(longVa).first()).toBeVisible()
+
+  // The table wrapper must not scroll horizontally.
+  const wrapper = page.getByTestId("payment-table-wrapper")
+  const metrics = await wrapper.evaluate((el) => ({
+    scrollWidth: el.scrollWidth,
+    clientWidth: el.clientWidth,
+    overflowX: getComputedStyle(el).overflowX,
+  }))
+  expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth)
+  expect(metrics.overflowX).not.toBe("scroll")
+  expect(metrics.overflowX).not.toBe("auto")
+
+  // The whole page must not gain a horizontal scrollbar either.
+  const pageMetrics = await page.evaluate(() => ({
+    scrollWidth: document.documentElement.scrollWidth,
+    clientWidth: document.documentElement.clientWidth,
+  }))
+  expect(pageMetrics.scrollWidth).toBeLessThanOrEqual(pageMetrics.clientWidth)
+
+  // Secondary fields are hidden before expanding.
+  await expect(
+    page.getByText("Pembayaran VA berhasil dengan keterangan panjang sekali")
+  ).toHaveCount(0)
+
+  // Expanding one row reveals its secondary field in a full-width detail row.
+  await page.getByRole("button", { name: "Buka detail transaksi" }).first().click()
+  await expect(page.getByTestId("payment-detail-row")).toBeVisible()
+  await expect(
+    page.getByText("Pembayaran VA berhasil dengan keterangan panjang sekali")
+  ).toBeVisible()
+
+  expect(problems).toEqual([])
+})
+
 // A Superadmin never sees the mitra report group and cannot open the routes
 // directly; the guard sends it back to the dashboard.
 test("Superadmin has no report menus and is redirected from billing", async ({
