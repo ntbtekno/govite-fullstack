@@ -96,6 +96,47 @@ func setupWith(t *testing.T, capStore authdomain.CaptchaStore, image authdomain.
 	return &env{t, f, store.New(pool), pool, m, push, logsDir}
 }
 
+// setupWithThrottle is like setupWith but allows a custom global throttle
+// (ThrottleLimit) so a test can exhaust the global bucket without 100k requests.
+// Login/captcha/refresh limits remain high (100000) so only the global bucket
+// is exhausted.
+func setupWithThrottle(t *testing.T, globalLimit int) *env {
+	t.Helper()
+	url := os.Getenv("TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	if err := postgres.Migrate(ctx, pool, "up"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `TRUNCATE role, permission, "user", audit_log, app_setting, notification, announcement, webhook_event, api_key, attachment, fcm_device, mitra CASCADE`); err != nil {
+		t.Fatal(err)
+	}
+	m := &mail.Memory{}
+	cfg := config.Config{Env: "test", WebURL: "http://web.test", JWTSecret: strings.Repeat("s", 32), RefreshPepper: strings.Repeat("p", 16), ThrottleLimit: globalLimit, LoginThrottleLimit: 100000, CaptchaThrottleLimit: 100000, LogLevel: "silent", MidtransServerKey: "test-server-key"}
+	push := &fcm.Memory{}
+	logsDir := t.TempDir()
+	d := server.Deps{Cfg: cfg, Pool: pool, Mail: m, Push: push, CaptchaImage: captchaImage{}, CaptchaStore: nil,
+		LoginLog: server.AttemptRecorder{Log: loginlog.New(logsDir, func(err error) { t.Logf("login log: %v", err) })}}
+	if endpoint := os.Getenv("TEST_MINIO_ENDPOINT"); endpoint != "" {
+		d.Files, err = storage.New(storage.Config{Endpoint: endpoint, AccessKey: "minio", SecretKey: "minio12345", Bucket: "app-test", PublicEndpoint: "http://" + endpoint})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := d.Files.EnsureBucket(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f, _ := server.New(d)
+	return &env{t, f, store.New(pool), pool, m, push, logsDir}
+}
+
 // seedUser creates a role holding perms (scope all) and an active user in it.
 func (e *env) seedUser(email string, perms ...policy.Permission) (userID, roleID string) {
 	ctx := context.Background()
@@ -1496,41 +1537,68 @@ func (e *env) doAbsolute(method, path string, body io.Reader) res {
 // loginLimit, refreshLimit). This test exhausts the global limit on a data
 // endpoint and then verifies auth endpoints still respond normally.
 func TestAuthEndpointsNotRateLimitedByGlobalLimit(t *testing.T) {
-	e := setupWith(t, nil, captchaImage{})
+	// Global limiter: 5 requests per IP per minute; auth limiters stay at 100k.
+	const globalLimit = 5
+	e := setupWithThrottle(t, globalLimit)
 	e.seedUser("u@test.local", all...)
 	_, refresh := e.login("u@test.local")
 	if refresh == nil {
 		t.Fatal("no refresh cookie")
 	}
 
-	// Use a very low global limit for this test (set in setupWith cfg: ThrottleLimit: 100000)
-	// We'll manually exhaust it by hitting a data endpoint repeatedly.
-	// But since the test setup uses a high limit, we instead verify the routing:
-	// auth endpoints are mounted on a separate group without globalLimit.
+	// Exhaust the global bucket by hitting a data endpoint (/health) that IS under
+	// globalLimit. The first `globalLimit` calls should succeed (200); the
+	// (globalLimit+1)-th call must return 429 TOO_MANY_REQUESTS.
+	for i := 0; i < globalLimit+1; i++ {
+		r := e.do("GET", "/health", nil)
+		if i < globalLimit {
+			if r.Code != 200 {
+				t.Fatalf("data %d (pre-exhaust): want 200 got %d: %s", i, r.Code, r.Raw)
+			}
+		} else {
+			if r.Code != 429 || r.errCode() != "TOO_MANY_REQUESTS" {
+				t.Fatalf("data %d (post-exhaust): want 429 TOO_MANY_REQUESTS, got %d %s: %s", i, r.Code, r.errCode(), r.Raw)
+			}
+		}
+	}
 
-	// 1. Verify /auth/captcha works (has its own captchaLimit)
+	// 1. Verify /auth/captcha still works (has its own captchaLimit)
 	for i := 0; i < 5; i++ {
 		r := e.do("GET", "/auth/captcha", nil)
 		if r.Code != 200 {
-			t.Fatalf("captcha %d: %d %s", i, r.Code, r.Raw)
+			t.Fatalf("captcha %d: want 200 got %d: %s", i, r.Code, r.Raw)
 		}
 		if r.data()["captchaId"] == nil {
 			t.Fatalf("captcha missing id: %s", r.Raw)
 		}
 	}
 
-	// 2. Verify /auth/refresh works (has its own refreshLimit)
+	// 2. Verify /auth/refresh still works (has its own refreshLimit).
+	// A real browser client sends the latest Set-Cookie refresh_token from each
+	// response, so we must chain the new cookie after each successful refresh.
 	for i := 0; i < 5; i++ {
 		r := e.do("POST", "/auth/refresh", nil, cookie(refresh))
 		if r.Code != 200 {
-			t.Fatalf("refresh %d: %d %s", i, r.Code, r.Raw)
+			t.Fatalf("refresh %d: want 200 got %d: %s", i, r.Code, r.Raw)
 		}
 		if r.data()["accessToken"] == nil {
 			t.Fatalf("refresh missing token: %s", r.Raw)
 		}
+		// Rotate to the new refresh cookie (mirrors real client behavior).
+		var next *http.Cookie
+		for _, c := range r.Cookies {
+			if c.Name == "refresh_token" && c.Value != "" {
+				next = c
+				break
+			}
+		}
+		if next == nil {
+			t.Fatalf("refresh %d: no new refresh_token cookie in response: %s", i, r.Raw)
+		}
+		refresh = next
 	}
 
-	// 3. Verify /auth/login works (has its own loginLimit)
+	// 3. Verify /auth/login still works (has its own loginLimit)
 	for i := 0; i < 3; i++ {
 		id, answer := e.solveCaptcha()
 		r := e.do("POST", "/auth/login", map[string]string{
@@ -1540,7 +1608,7 @@ func TestAuthEndpointsNotRateLimitedByGlobalLimit(t *testing.T) {
 			"captcha":   answer,
 		})
 		if r.Code != 201 {
-			t.Fatalf("login %d: %d %s", i, r.Code, r.Raw)
+			t.Fatalf("login %d: want 201 got %d: %s", i, r.Code, r.Raw)
 		}
 	}
 }
