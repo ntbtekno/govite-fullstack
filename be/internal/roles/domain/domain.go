@@ -55,8 +55,10 @@ func (r Role) CanDelete() error {
 	return nil
 }
 
+// CanSetPermissions allows permission changes for mitra system roles (MITRA_ADMIN, MITRA_STAFF),
+// but keeps Super Admin locked so nobody can lock admins out of the system.
 func (r Role) CanSetPermissions() error {
-	if r.IsSystem {
+	if r.ID == policy.SuperAdminRoleID {
 		return ErrSystem
 	}
 	return nil

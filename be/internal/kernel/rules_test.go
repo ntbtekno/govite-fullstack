@@ -51,21 +51,53 @@ func TestAuditRedact(t *testing.T) {
 }
 
 func TestRoleRules(t *testing.T) {
-	sys := roles.Role{IsSystem: true, Name: "Super Admin"}
-	if sys.CanDelete() != roles.ErrSystem || sys.CanSetPermissions() != roles.ErrSystem {
-		t.Fatal("system role must be immutable")
+	// Super Admin (system role with SuperAdminRoleID) is fully immutable
+	super := roles.Role{ID: "019a0000-0000-7000-8000-000000000001", IsSystem: true, Name: "Super Admin"}
+	if super.CanDelete() != roles.ErrSystem || super.CanSetPermissions() != roles.ErrSystem {
+		t.Fatal("Super Admin must be immutable")
 	}
 	name := "Super Admin"
-	if sys.CanRename(&name) != nil {
+	if super.CanRename(&name) != nil {
 		t.Fatal("same name is not a rename")
 	}
+
+	// MITRA_ADMIN (system role) can delete but CAN set permissions
+	mitraAdmin := roles.Role{ID: "019a0000-0000-7000-8000-000000000002", IsSystem: true, Name: "MITRA_ADMIN"}
+	if mitraAdmin.CanDelete() != roles.ErrSystem {
+		t.Fatal("MITRA_ADMIN cannot be deleted")
+	}
+	if mitraAdmin.CanSetPermissions() != nil {
+		t.Fatal("MITRA_ADMIN can set permissions")
+	}
+
+	// MITRA_STAFF (system role) can delete but CAN set permissions
+	mitraStaff := roles.Role{ID: "019a0000-0000-7000-8000-000000000003", IsSystem: true, Name: "MITRA_STAFF"}
+	if mitraStaff.CanDelete() != roles.ErrSystem {
+		t.Fatal("MITRA_STAFF cannot be deleted")
+	}
+	if mitraStaff.CanSetPermissions() != nil {
+		t.Fatal("MITRA_STAFF can set permissions")
+	}
+
+	// Custom system role (not Super Admin, not Mitra) - cannot delete, cannot set permissions
+	otherSys := roles.Role{ID: "custom-sys-1", IsSystem: true, Name: "Other System"}
+	if otherSys.CanDelete() != roles.ErrSystem {
+		t.Fatal("other system role cannot be deleted")
+	}
+	if otherSys.CanSetPermissions() != nil {
+		t.Fatal("other system role can set permissions (only Super Admin is locked)")
+	}
+
+	// Role with users cannot be deleted
 	if (roles.Role{UserCount: 1}).CanDelete() != roles.ErrInUse {
 		t.Fatal("role with users must not delete")
 	}
+	// Dropped guarded permission must be reported
 	r := roles.Role{Permissions: []rbac.Grant{{Resource: "users", Action: "manage", Scope: "all"}}}
 	if d := r.Dropped(nil); len(d) != 1 {
 		t.Fatalf("dropping guarded users.manage must be reported, got %v", d)
 	}
+	// Unknown permission must be rejected
 	if roles.ValidGrants([]rbac.Grant{{Resource: "nope", Action: "x", Scope: "all"}}) == nil {
 		t.Fatal("unknown permission must be rejected")
 	}

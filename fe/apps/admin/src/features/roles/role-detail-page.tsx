@@ -9,6 +9,9 @@ import {
   type PermissionCategory,
   type RolePermission,
   type Scope,
+  MITRA_ADMIN_ROLE_ID,
+  MITRA_STAFF_ROLE_ID,
+  SUPER_ADMIN_ROLE_ID,
 } from "@app/contracts"
 import { Button } from "@app/ui/components/button"
 import { Checkbox } from "@app/ui/components/checkbox"
@@ -53,8 +56,16 @@ export function RoleDetailPage() {
   const [edited, setDraft] = useState<RolePermission[] | null>(null)
   const draft = edited ?? role.data?.permissions ?? []
   const selectedKeys = new Set(draft.map((p) => `${p.resource}.${p.action}`))
-  const dirty =
+const dirty =
     !!role.data && signature(role.data.permissions) !== signature(draft)
+
+  // Permission editing: enabled for custom roles and mitra system roles (MITRA_ADMIN, MITRA_STAFF).
+  // Super Admin stays locked. Metadata stays locked for all system roles.
+  const isSuperAdmin = role.data?.id === SUPER_ADMIN_ROLE_ID
+  const isMitraSystemRole =
+    role.data?.id === MITRA_ADMIN_ROLE_ID || role.data?.id === MITRA_STAFF_ROLE_ID
+  const canEditPermissions = !!role.data && !isSuperAdmin && (!role.data.isSystem || isMitraSystemRole)
+
   const grouped = catalog.data?.permissions.reduce(
     (acc, p) => {
       const key = `${p.resource}.${p.action}`
@@ -238,7 +249,7 @@ export function RoleDetailPage() {
                   size="sm"
                   onClick={() => setPermissions.mutate(draft)}
                   disabled={
-                    role.data.isSystem || !dirty || setPermissions.isPending
+                    !canEditPermissions || !dirty || setPermissions.isPending
                   }
                 >
                   Save permissions
@@ -273,7 +284,7 @@ export function RoleDetailPage() {
                               <Label className="flex items-center gap-2 text-sm">
                                 <Checkbox
                                   checked={selectedKeys.has(key)}
-                                  disabled={role.data.isSystem}
+                                  disabled={!canEditPermissions}
                                   onCheckedChange={(checked) =>
                                     togglePermission(
                                       { ...p, scope: existing?.scope ?? "all" },
@@ -288,7 +299,7 @@ export function RoleDetailPage() {
                               </Label>
                               <Select
                                 value={existing?.scope ?? "all"}
-                                disabled={role.data.isSystem || !existing}
+                                disabled={!canEditPermissions || !existing}
                                 onValueChange={(scope) =>
                                   setDraft(
                                     draft.map((permission) =>

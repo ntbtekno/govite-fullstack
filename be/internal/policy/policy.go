@@ -9,6 +9,13 @@ import (
 
 var Scopes = []string{"self", "team", "mitra", "all"}
 
+// System role IDs (fixed UUIDs, shared with frontend via generated contracts).
+const (
+	SuperAdminRoleID = "019a0000-0000-7000-8000-000000000001"
+	MitraAdminRoleID = "019a0000-0000-7000-8000-000000000002"
+	MitraStaffRoleID = "019a0000-0000-7000-8000-000000000003"
+)
+
 var Actions = []string{"manage", "view", "create", "edit", "delete", "export"}
 
 var Resources = []string{

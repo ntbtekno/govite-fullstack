@@ -180,13 +180,6 @@ func serve(ctx context.Context, cfg config.Config, pool *pgxpool.Pool) error {
 	}
 }
 
-// SuperAdminRoleID is fixed so seed is idempotent across environments.
-const (
-	SuperAdminRoleID = "019a0000-0000-7000-8000-000000000001"
-	MitraAdminRoleID = "019a0000-0000-7000-8000-000000000002"
-	MitraStaffRoleID = "019a0000-0000-7000-8000-000000000003"
-)
-
 func seed(ctx context.Context, cfg config.Config, q *store.Queries) error {
 	keys := make([]string, len(policy.Permissions))
 	for i, p := range policy.Permissions {
@@ -199,40 +192,40 @@ func seed(ctx context.Context, cfg config.Config, q *store.Queries) error {
 		return err
 	}
 	desc := "Full system access"
-	if err := q.UpsertSystemRole(ctx, store.UpsertSystemRoleParams{ID: SuperAdminRoleID, Name: "Super Admin", Description: &desc}); err != nil {
+	if err := q.UpsertSystemRole(ctx, store.UpsertSystemRoleParams{ID: policy.SuperAdminRoleID, Name: "Super Admin", Description: &desc}); err != nil {
 		return err
 	}
 	mitraAdminDesc := "Admin Mitra (mengelola user mitra)"
-	if err := q.UpsertSystemRole(ctx, store.UpsertSystemRoleParams{ID: MitraAdminRoleID, Name: "MITRA_ADMIN", Description: &mitraAdminDesc}); err != nil {
+	if err := q.UpsertSystemRole(ctx, store.UpsertSystemRoleParams{ID: policy.MitraAdminRoleID, Name: "MITRA_ADMIN", Description: &mitraAdminDesc}); err != nil {
 		return err
 	}
 	mitraStaffDesc := "Staff Mitra (lihat user mitra)"
-	if err := q.UpsertSystemRole(ctx, store.UpsertSystemRoleParams{ID: MitraStaffRoleID, Name: "MITRA_STAFF", Description: &mitraStaffDesc}); err != nil {
+	if err := q.UpsertSystemRole(ctx, store.UpsertSystemRoleParams{ID: policy.MitraStaffRoleID, Name: "MITRA_STAFF", Description: &mitraStaffDesc}); err != nil {
 		return err
 	}
 	// The report menus are mitra-only, so the Superadmin default grants skip
 	// them; a Superadmin can still assign them through role management.
 	for _, p := range policy.SuperAdminPermissions() {
-		if err := q.UpsertRolePermission(ctx, store.UpsertRolePermissionParams{ID: kernel.NewID(), RoleID: SuperAdminRoleID, Resource: p.Resource, Action: p.Action, Scope: "all"}); err != nil {
+		if err := q.UpsertRolePermission(ctx, store.UpsertRolePermissionParams{ID: kernel.NewID(), RoleID: policy.SuperAdminRoleID, Resource: p.Resource, Action: p.Action, Scope: "all"}); err != nil {
 			return err
 		}
 	}
-	if err := q.UpsertRolePermission(ctx, store.UpsertRolePermissionParams{ID: kernel.NewID(), RoleID: MitraAdminRoleID, Resource: "users", Action: "manage", Scope: "mitra"}); err != nil {
+	if err := q.UpsertRolePermission(ctx, store.UpsertRolePermissionParams{ID: kernel.NewID(), RoleID: policy.MitraAdminRoleID, Resource: "users", Action: "manage", Scope: "mitra"}); err != nil {
 		return err
 	}
-	if err := q.UpsertRolePermission(ctx, store.UpsertRolePermissionParams{ID: kernel.NewID(), RoleID: MitraAdminRoleID, Resource: "users", Action: "view", Scope: "mitra"}); err != nil {
+	if err := q.UpsertRolePermission(ctx, store.UpsertRolePermissionParams{ID: kernel.NewID(), RoleID: policy.MitraAdminRoleID, Resource: "users", Action: "view", Scope: "mitra"}); err != nil {
 		return err
 	}
-	if err := q.UpsertRolePermission(ctx, store.UpsertRolePermissionParams{ID: kernel.NewID(), RoleID: MitraStaffRoleID, Resource: "users", Action: "view", Scope: "mitra"}); err != nil {
+	if err := q.UpsertRolePermission(ctx, store.UpsertRolePermissionParams{ID: kernel.NewID(), RoleID: policy.MitraStaffRoleID, Resource: "users", Action: "view", Scope: "mitra"}); err != nil {
 		return err
 	}
 	// MITRA_ADMIN gets the full reporting set, MITRA_STAFF only the view grants.
 	for _, p := range policy.MitraReportPermissions {
-		if err := q.UpsertRolePermission(ctx, store.UpsertRolePermissionParams{ID: kernel.NewID(), RoleID: MitraAdminRoleID, Resource: p.Resource, Action: p.Action, Scope: "mitra"}); err != nil {
+		if err := q.UpsertRolePermission(ctx, store.UpsertRolePermissionParams{ID: kernel.NewID(), RoleID: policy.MitraAdminRoleID, Resource: p.Resource, Action: p.Action, Scope: "mitra"}); err != nil {
 			return err
 		}
 		if p.Action == "view" {
-			if err := q.UpsertRolePermission(ctx, store.UpsertRolePermissionParams{ID: kernel.NewID(), RoleID: MitraStaffRoleID, Resource: p.Resource, Action: p.Action, Scope: "mitra"}); err != nil {
+			if err := q.UpsertRolePermission(ctx, store.UpsertRolePermissionParams{ID: kernel.NewID(), RoleID: policy.MitraStaffRoleID, Resource: p.Resource, Action: p.Action, Scope: "mitra"}); err != nil {
 				return err
 			}
 		}
@@ -244,7 +237,7 @@ func seed(ctx context.Context, cfg config.Config, q *store.Queries) error {
 	if err != nil {
 		return err
 	}
-	if err := q.UpsertSuperAdmin(ctx, store.UpsertSuperAdminParams{ID: kernel.NewID(), Email: cfg.SuperAdminEmail, RoleID: SuperAdminRoleID, PasswordHash: &hash, Username: kernel.Ptr(cfg.SuperAdminUsername)}); err != nil {
+	if err := q.UpsertSuperAdmin(ctx, store.UpsertSuperAdminParams{ID: kernel.NewID(), Email: cfg.SuperAdminEmail, RoleID: policy.SuperAdminRoleID, PasswordHash: &hash, Username: kernel.Ptr(cfg.SuperAdminUsername)}); err != nil {
 		return err
 	}
 	if err := seedE2EMitra(ctx, cfg, q); err != nil {
@@ -273,7 +266,7 @@ func seedE2EMitra(ctx context.Context, cfg config.Config, q *store.Queries) erro
 		return err
 	}
 	email := username + "@mitra.local"
-	if err := q.UpsertSuperAdmin(ctx, store.UpsertSuperAdminParams{ID: kernel.NewID(), Email: email, RoleID: MitraAdminRoleID, PasswordHash: &hash, Username: &username}); err != nil {
+	if err := q.UpsertSuperAdmin(ctx, store.UpsertSuperAdminParams{ID: kernel.NewID(), Email: email, RoleID: policy.MitraAdminRoleID, PasswordHash: &hash, Username: &username}); err != nil {
 		return err
 	}
 	u, err := q.GetUserByUsername(ctx, &username)

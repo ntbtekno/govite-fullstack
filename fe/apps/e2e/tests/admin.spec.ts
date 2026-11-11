@@ -649,6 +649,105 @@ test("app loader shows during delayed session probe on reload", async ({
   expect(problems).toEqual([])
 })
 
+// Role detail MITRA_STAFF: enable one permission, save, reload -> still selected
+test("MITRA_STAFF role detail: enable permission, save, reload persists", async ({
+  page,
+}) => {
+  const problems = watch(page)
+  await signIn(page)
+
+  // Go to Roles page
+  await page.getByRole("link", { name: "Roles" }).click()
+  await expect(page).toHaveURL(/\/admin\/administration\/roles$/)
+  await expect(page.getByRole("heading", { level: 1, name: "Roles" })).toBeVisible()
+
+  // Find MITRA_STAFF row and click View
+  const mitraStaffRow = page.getByRole("row", { name: /MITRA_STAFF/i })
+  await expect(mitraStaffRow).toBeVisible()
+  await mitraStaffRow.getByRole("link", { name: "View" }).click()
+
+  // Wait for role detail page
+  await expect(page).toHaveURL(/\/admin\/administration\/roles\/[^/]+$/)
+  await expect(page.getByRole("heading", { level: 1, name: "MITRA_STAFF" })).toBeVisible()
+
+  // Find a permission that is currently unchecked (e.g., audit.view -> "Lihat Audit Log")
+  // The checkbox should be enabled (canEditPermissions = true for MITRA_STAFF)
+  // Labels are Indonesian per permissionCatalogEntry
+  const auditViewCheckbox = page.getByLabel("Lihat Audit Log")
+  await expect(auditViewCheckbox).toBeEnabled()
+  const initiallyChecked = await auditViewCheckbox.isChecked()
+
+  // If already checked, find another unchecked permission
+  let targetCheckbox = auditViewCheckbox
+  if (initiallyChecked) {
+    // Try users.manage -> "Kelola Pengguna"
+    const usersManageCheckbox = page.getByLabel("Kelola Pengguna")
+    if (!(await usersManageCheckbox.isChecked())) {
+      targetCheckbox = usersManageCheckbox
+    } else {
+      // Try settings.manage -> "Kelola Pengaturan"
+      const settingsManageCheckbox = page.getByLabel("Kelola Pengaturan")
+      targetCheckbox = settingsManageCheckbox
+    }
+  }
+
+  // Enable the permission
+  await targetCheckbox.check()
+  await expect(targetCheckbox).toBeChecked()
+
+  // Click Save permissions
+  await page.getByRole("button", { name: "Save permissions" }).click()
+
+  // Wait for toast success
+  await expect(page.getByText("Permissions saved")).toBeVisible({ timeout: 5000 })
+
+  // Reload the page
+  await page.reload()
+
+  // Wait for page to load
+  await expect(page.getByRole("heading", { level: 1, name: "MITRA_STAFF" })).toBeVisible()
+
+  // Verify the permission is still checked
+  await expect(targetCheckbox).toBeChecked()
+
+  expect(problems).toEqual([])
+})
+
+// Role detail Super Admin: permission editor stays disabled
+test("Super Admin role detail: permission editor stays disabled", async ({
+  page,
+}) => {
+  const problems = watch(page)
+  await signIn(page)
+
+  // Go to Roles page
+  await page.getByRole("link", { name: "Roles" }).click()
+  await expect(page).toHaveURL(/\/admin\/administration\/roles$/)
+  await expect(page.getByRole("heading", { level: 1, name: "Roles" })).toBeVisible()
+
+  // Find Super Admin row and click View
+  const superAdminRow = page.getByRole("row", { name: /Super Admin/i })
+  await expect(superAdminRow).toBeVisible()
+  await superAdminRow.getByRole("link", { name: "View" }).click()
+
+  // Wait for role detail page
+  await expect(page).toHaveURL(/\/admin\/administration\/roles\/[^/]+$/)
+  await expect(page.getByRole("heading", { level: 1, name: "Super Admin" })).toBeVisible()
+
+  // All permission checkboxes should be disabled
+  const checkboxes = page.getByRole("checkbox", { name: /view|manage|edit|create|delete|export/i })
+  const count = await checkboxes.count()
+  for (let i = 0; i < count; i++) {
+    const checkbox = checkboxes.nth(i)
+    await expect(checkbox).toBeDisabled()
+  }
+
+  // Save permissions button should be disabled
+  await expect(page.getByRole("button", { name: "Save permissions" })).toBeDisabled()
+
+  expect(problems).toEqual([])
+})
+
 // Proves the password change form shows error toast when current password is wrong.
 test("password change shows error toast for wrong current password", async ({
   page,
