@@ -285,6 +285,38 @@ test("Superadmin keeps Users menu and opens a user detail page", async ({
   expect(problems).toEqual([])
 })
 
+// Halaman Permission menampilkan katalog yang dikelompokkan per kategori dan
+// bisa dicari. Diakses sebagai Superadmin (memiliki permissions.view).
+test("Permission menampilkan katalog tergrup per kategori dan bisa dicari", async ({
+  page,
+}) => {
+  const problems = watch(page)
+  await signIn(page)
+
+  await page.getByRole("link", { name: "Permissions" }).click()
+  await expect(page).toHaveURL(/\/admin\/administration\/permissions$/)
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Permissions" })
+  ).toBeVisible()
+
+  // Header grup kategori terlihat (Report berisi billing/payments, dsb.).
+  await expect(page.getByText("Report")).toBeVisible()
+  // Permission kunci dari grup Administration terlihat sebelum dicari.
+  await expect(page.getByText("users.manage")).toBeVisible()
+  await expect(page.getByText("roles.manage")).toBeVisible()
+
+  // Pencarian satu kata kunci menyisakan hanya permission yang cocok.
+  await page.getByLabel("Cari permission").fill("billing")
+  await expect(page.getByText("billing.view")).toBeVisible()
+  await expect(page.getByText("billing.export")).toBeVisible()
+  // Grup yang tidak memiliki cocok disembunyikan (kunci grup Administration hilang).
+  await expect(page.getByText("users.manage")).toHaveCount(0)
+  await expect(page.getByText("roles.manage")).toHaveCount(0)
+  await expect(page.getByText("payments.view")).toHaveCount(0)
+
+  expect(problems).toEqual([])
+})
+
 // The mitra report menus (Billing Tagihan, History Payment) are mitra-only and
 // gated by billing.view / payments.view, both granted to MITRA_ADMIN by seed.
 // In this e2e environment without MySQL, the endpoints answer 503 and the UI
