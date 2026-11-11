@@ -95,6 +95,7 @@ func New(d Deps) (*fiber.App, *sysapp.Service) {
 	h.account.Routes(me)
 	h.files.Routes(me)
 	h.notify.Routes(me)
+	h.reports.MeRoutes(me)
 
 	// Signed in + permission. Guarded routes must name their permission.
 	g := h.rbac.Guard(me)

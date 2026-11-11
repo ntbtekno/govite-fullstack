@@ -23,7 +23,7 @@ export REPORTS_MYSQL_DSN="${REPORTS_MYSQL_DSN:-}"
 export JWT_ACCESS_SECRET="${JWT_ACCESS_SECRET:-$(printf 's%.0s' {1..32})}"
 export REFRESH_TOKEN_PEPPER="${REFRESH_TOKEN_PEPPER:-$(printf 'p%.0s' {1..16})}"
 export WEB_URL="http://localhost:4173" LOG_LEVEL=silent APP_PORT="$port"
-export THROTTLE_LIMIT=100000 LOGIN_THROTTLE_LIMIT=100000
+export THROTTLE_LIMIT=100000 LOGIN_THROTTLE_LIMIT=100000 CAPTCHA_THROTTLE_LIMIT=100000
 go build -o bin/api ./cmd/api
 ./bin/api migrate >/dev/null
 ./bin/api seed >/dev/null

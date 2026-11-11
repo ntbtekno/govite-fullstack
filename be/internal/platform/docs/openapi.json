@@ -6257,6 +6257,37 @@
         ]
       }
     },
+    "/api/v1/dashboard/summary": {
+      "get": {
+        "operationId": "DashboardController_summary",
+        "responses": {
+          "200": {
+            "description": "Dashboard summary: last successful login and, for a mitra caller, the current month transactions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Dashboard summary for the signed-in caller",
+        "tags": [
+          "Dashboard"
+        ]
+      }
+    },
     "/api/v1/reports/billing": {
       "get": {
         "operationId": "ReportsController_billing",

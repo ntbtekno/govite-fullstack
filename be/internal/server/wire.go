@@ -193,8 +193,9 @@ func wire(d Deps) (handlers, *sysapp.Service) {
 	mitra := &mitraapp.Service{Repo: mitrainfra.Repository{DB: db}, Tx: db}
 
 	reports := &reportsapp.Service{
-		Repo:  reportsinfra.NewRepository(d.ReportsDB),
-		Mitra: reportsinfra.MitraResolver{DB: db},
+		Repo:      reportsinfra.NewRepository(d.ReportsDB),
+		Mitra:     reportsinfra.MitraResolver{DB: db},
+		LastLogin: reportsinfra.LastLoginResolver{DB: db},
 	}
 
 	var redisPing func(context.Context) error

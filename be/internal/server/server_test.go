@@ -515,13 +515,50 @@ func TestLoginAuditRecordsAttemptsWithoutSecrets(t *testing.T) {
 	_ = userID
 }
 
+// TestDashboardLastLoginReflectsOnlySuccessfulLogins proves the dashboard's
+// lastLogin reads the caller's most recent *successful* login and nothing else:
+// a failed attempt never creates a session family row, so it can never surface
+// as a "last login".
+func TestDashboardLastLoginReflectsOnlySuccessfulLogins(t *testing.T) {
+	// A user whose ONLY attempt failed: lastLogin is null and no family row exists.
+	e := setup(t)
+	e.seedUser("fail@test.local", all...)
+	id, answer := e.solveCaptcha()
+	expect(t, e.do("POST", "/auth/login", map[string]string{"login": "fail@test.local", "password": "wrong-password-xyz", "captchaId": id, "captcha": answer}), 401, "INVALID_CREDENTIALS")
+
+	var n int
+	if err := e.pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM refresh_token_family f JOIN "user" u ON u.id = f.user_id WHERE u.email = 'fail@test.local'`,
+	).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("a failed login must not create a session family, got %d", n)
+	}
+
+	// After one successful login the card carries that login's recorded ip.
+	tok, _ := e.login("fail@test.local")
+	r := e.do("GET", "/dashboard/summary", nil, bearer(tok))
+	expect(t, r, 200)
+	data, ok := r.Body["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing data envelope: %s", r.Raw)
+	}
+	last, ok := data["lastLogin"].(map[string]any)
+	if !ok {
+		t.Fatalf("lastLogin must be present after a successful login: %s", r.Raw)
+	}
+	if last["ip"] == "" || last["ip"] == nil {
+		t.Fatalf("expected a recorded ip on the successful login, got %v", last["ip"])
+	}
+}
+
 // TestCrossMitraAccessIsAudited proves Milestone 5: a mitra user reaching for
 // another mitra's user still gets 404, and the refusal is recorded as an audit
 // entry so an operator can see the attempt.
 func TestCrossMitraAccessIsAudited(t *testing.T) {
 	e := setup(t)
 	ctx := context.Background()
-
 	mitraA := e.seedMitra("MTR-XA", "Mitra X A")
 	mitraB := e.seedMitra("MTR-XB", "Mitra X B")
 

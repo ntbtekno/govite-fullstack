@@ -161,6 +161,40 @@ func (r Repository) paymentSummary(ctx context.Context, f domain.Filter) (domain
 	return r.summary(ctx, query, args)
 }
 
+// MonthlyTransactionCounts returns the mitra's per-day transaction counts for
+// the [from, to) window, keyed by YYYY-MM-DD. The caller applies the mitra
+// scope via f.MitraKode; from/to come from the validated month window.
+func (r Repository) MonthlyTransactionCounts(ctx context.Context, f domain.Filter, from, to time.Time) (map[string]int64, error) {
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+
+	f.From = &from
+	f.To = &to
+	query, args := BuildMonthlyCounts(f)
+	rows, err := r.DB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make(map[string]int64)
+	for rows.Next() {
+		var day, count sql.NullString
+		if err := rows.Scan(&day, &count); err != nil {
+			return nil, err
+		}
+		if !day.Valid {
+			continue
+		}
+		n, err := strconv.ParseInt(count.String, 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		out[day.String] = n
+	}
+	return out, rows.Err()
+}
+
 func (r Repository) summary(ctx context.Context, query string, args []any) (domain.Summary, error) {
 	var count int64
 	var total float64
@@ -211,4 +245,29 @@ func (r MitraResolver) Kode(ctx context.Context, mitraID string) (string, error)
 		return "", err
 	}
 	return m.KodeMitra, nil
+}
+
+// LastLoginResolver reads the caller's last successful login from the primary
+// Postgres database.
+type LastLoginResolver struct {
+	DB *postgres.DB
+}
+
+func (r LastLoginResolver) LastLogin(ctx context.Context, userID string) (domain.LastLogin, error) {
+	row, err := r.DB.Q(ctx).LastLogin(ctx, userID)
+	if err != nil {
+		return domain.LastLogin{}, postgres.Err(err)
+	}
+	return domain.LastLogin{
+		At:        row.CreatedAt,
+		IP:        deptr(row.IpAddress),
+		UserAgent: deptr(row.UserAgent),
+	}, nil
+}
+
+func deptr(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }

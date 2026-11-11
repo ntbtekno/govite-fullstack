@@ -788,3 +788,79 @@ test("password change shows error toast for wrong current password", async ({
 
   expect(problems).toEqual([])
 })
+
+/** Signs in at /login-mitra as the seeded mitra user. */
+async function signInMitra(page: Page) {
+  await page.goto("/login-mitra")
+  await page.getByLabel("Kode Mitra").fill(mitraKode)
+  await page.getByLabel("Username atau Email").fill(mitraUsername)
+  await page.getByLabel("Password").fill(mitraPassword)
+  await page.getByRole("textbox", { name: "Captcha" }).fill(captcha)
+  await page.getByRole("button", { name: "Sign in" }).click()
+  await expect(page).toHaveURL(/\/admin\/dashboard/)
+}
+
+// The mitra dashboard shows both new cards. The Login Terakhir card is filled
+// from the real session login (the refresh-token family records the client IP),
+// and the Transaksi Bulan Ini card renders one bar per day of the running month
+// from a mocked summary (the reports database is absent in e2e, so real data is
+// unavailable and we exercise the chart rendering deterministically).
+test("mitra dashboard shows Login Terakhir with IP and Transaksi Bulan Ini bars", async ({
+  page,
+}) => {
+  const problems = watch(page)
+
+  const now = new Date()
+  const days = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()
+  const monthlyDays = Array.from({ length: days }, (_, i) => ({
+    date: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(i + 1).padStart(2, "0")}`,
+    count: i % 4,
+  }))
+  await page.route("**/api/v1/dashboard/summary**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        data: {
+          lastLogin: {
+            at: "2026-11-10T08:30:00Z",
+            ip: "203.0.113.7",
+            userAgent:
+              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          },
+          monthlyTransactions: {
+            unavailable: false,
+            total: monthlyDays.reduce((s, d) => s + d.count, 0),
+            days: monthlyDays,
+          },
+        },
+      }),
+    })
+  })
+
+  await signInMitra(page)
+
+  const loginCard = page.getByTestId("login-terakhir-card")
+  await expect(loginCard).toBeVisible()
+  await expect(loginCard).toContainText("203.0.113.7")
+  await expect(page.getByTestId("login-perangkat")).toContainText("Chrome")
+
+  const chartCard = page.getByTestId("transaksi-bulan-ini-card")
+  await expect(chartCard).toBeVisible()
+  await expect(page.getByTestId("transaksi-chart")).toBeVisible()
+  // One bar per day of the running month.
+  await expect(page.getByTestId("transaksi-bar")).toHaveCount(days)
+
+  expect(problems).toEqual([])
+})
+
+// A Superadmin session never renders the mitra-only transaction chart card.
+test("Superadmin dashboard shows no transaction chart card", async ({ page }) => {
+  const problems = watch(page)
+  await signIn(page)
+
+  await expect(page.getByTestId("login-terakhir-card")).toBeVisible()
+  await expect(page.getByTestId("transaksi-bulan-ini-card")).toHaveCount(0)
+
+  expect(problems).toEqual([])
+})

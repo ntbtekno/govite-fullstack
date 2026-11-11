@@ -49,6 +49,17 @@ WHERE user_id = $1 AND revoked_at IS NULL AND id <> $2;
 -- name: GetFamily :one
 SELECT * FROM refresh_token_family WHERE id = $1;
 
+-- LastLogin returns the most recent successful login of one user. Every
+-- successful login creates a refresh_token_family row carrying the genuine
+-- client user agent and IP; revoked or expired families are still real logins,
+-- so they are not filtered out.
+-- name: LastLogin :one
+SELECT user_agent, ip_address, created_at
+FROM refresh_token_family
+WHERE user_id = $1
+ORDER BY created_at DESC
+LIMIT 1;
+
 -- name: ListSessions :many
 SELECT f.id, f.user_agent, f.ip_address, f.created_at, t.created_at AS last_used_at
 FROM refresh_token_family f

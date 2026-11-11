@@ -403,6 +403,31 @@ func (q *Queries) InvalidateUserTokens(ctx context.Context, arg InvalidateUserTo
 	return err
 }
 
+const lastLogin = `-- name: LastLogin :one
+SELECT user_agent, ip_address, created_at
+FROM refresh_token_family
+WHERE user_id = $1
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+type LastLoginRow struct {
+	UserAgent *string
+	IpAddress *string
+	CreatedAt time.Time
+}
+
+// LastLogin returns the most recent successful login of one user. Every
+// successful login creates a refresh_token_family row carrying the genuine
+// client user agent and IP; revoked or expired families are still real logins,
+// so they are not filtered out.
+func (q *Queries) LastLogin(ctx context.Context, userID string) (LastLoginRow, error) {
+	row := q.db.QueryRow(ctx, lastLogin, userID)
+	var i LastLoginRow
+	err := row.Scan(&i.UserAgent, &i.IpAddress, &i.CreatedAt)
+	return i, err
+}
+
 const latestOtp = `-- name: LatestOtp :one
 SELECT id, user_id, purpose, channel, token_hash, attempts, expires_at, used_at, created_at FROM user_token
 WHERE user_id = $1 AND purpose = $2 AND channel = 'mobile' AND used_at IS NULL

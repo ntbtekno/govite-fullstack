@@ -95,3 +95,16 @@ func BuildPaymentStats(f domain.Filter) (string, []any) {
 	where, args := paymentWhere(f)
 	return `SELECT COUNT(*), COALESCE(SUM(txamt), 0)` + paymentFrom + where, args
 }
+
+// BuildMonthlyCounts groups the mitra's settled rows by settlement day and
+// returns per-day counts. The day bucket is taken as-is from txdtstlmn (the
+// History Payment page does the same: no timezone conversion is applied to the
+// stored value). from is inclusive and to exclusive, both bound. The mitra
+// scope reuses paymentWhere, so the LIKE prefix and escaping stay identical.
+func BuildMonthlyCounts(f domain.Filter) (string, []any) {
+	where, args := paymentWhere(f)
+	return `SELECT DATE(txdtstlmn) AS d, COUNT(*)
+		FROM t_transaksi` + where + `
+		GROUP BY DATE(txdtstlmn)
+		ORDER BY d`, args
+}

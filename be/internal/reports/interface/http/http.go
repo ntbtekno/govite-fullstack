@@ -120,3 +120,16 @@ func (h Handler) Routes(g rbac.Guarded) {
 		return httpx.OK(c, q.response(items, summary.Count, summary))
 	})
 }
+
+// MeRoutes mounts the dashboard summary on the self-service group: any signed
+// in caller may read it, no permission required. The monthly section is only
+// filled for a mitra principal.
+func (h Handler) MeRoutes(r fiber.Router) {
+	r.Get("/dashboard/summary", func(c *fiber.Ctx) error {
+		sum, err := h.Svc.DashboardSummary(c.UserContext())
+		if err != nil {
+			return err
+		}
+		return httpx.OK(c, sum)
+	})
+}

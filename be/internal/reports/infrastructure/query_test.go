@@ -107,3 +107,28 @@ func TestPaymentStatsMatchListFilters(t *testing.T) {
 		}
 	}
 }
+
+func TestMonthlyCountsScopeToPrincipalMitra(t *testing.T) {
+	sql, args := BuildMonthlyCounts(domain.Filter{MitraKode: "010"})
+
+	if len(args) == 0 || args[0] != "01041%" {
+		t.Fatalf("first arg must be the mitra VA prefix, got %#v", args)
+	}
+	if strings.Contains(sql, "01041") {
+		t.Fatalf("pattern must be bound, not interpolated: %s", sql)
+	}
+	if !strings.Contains(sql, "reffacc LIKE ?") {
+		t.Fatalf("expected reffacc LIKE placeholder: %s", sql)
+	}
+	if !strings.Contains(sql, "DATE(txdtstlmn)") || !strings.Contains(sql, "GROUP BY") {
+		t.Fatalf("expected day grouping: %s", sql)
+	}
+}
+
+func TestMonthlyCountsEscapesKodeWildcards(t *testing.T) {
+	_, args := BuildMonthlyCounts(domain.Filter{MitraKode: "01%_"})
+
+	if args[0] != `01\%\_41%` {
+		t.Fatalf("want escaped prefix, got %#v", args[0])
+	}
+}

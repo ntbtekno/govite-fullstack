@@ -61,11 +61,45 @@ type PaymentRow struct {
 	Status        string  `json:"status"`
 }
 
+// LastLogin is the caller's most recent successful login: the time and the
+// genuine client IP and raw user agent captured when the session was created.
+// Present is false when the user has no recorded login yet.
+type LastLogin struct {
+	At        time.Time `json:"at"`
+	IP        string    `json:"ip"`
+	UserAgent string    `json:"userAgent"`
+}
+
+// DailyPoint is one calendar day of the current month: the date (YYYY-MM-DD)
+// and the transaction count for that day. Empty days are present with Count 0.
+type DailyPoint struct {
+	Date  string `json:"date"`
+	Count int64  `json:"count"`
+}
+
+// MonthlyTransactions is the caller mitra's transaction summary for the
+// running calendar month (Asia/Makassar). Unavailable is true when the reports
+// database is not configured; the other fields are then zero.
+type MonthlyTransactions struct {
+	Unavailable bool         `json:"unavailable"`
+	Total       int64        `json:"total"`
+	Days        []DailyPoint `json:"days"`
+}
+
 // Repository reads the external MySQL reporting database. It is nil when the
 // report DSN is not configured.
 type Repository interface {
 	Billing(ctx context.Context, f Filter) ([]BillingRow, Summary, error)
 	Payments(ctx context.Context, f Filter) ([]PaymentRow, Summary, error)
+	// MonthlyTransactionCounts returns the per-day counts (YYYY-MM-DD, already
+	// in Asia/Makassar) for the caller mitra's VA prefix and the given month.
+	MonthlyTransactionCounts(ctx context.Context, f Filter, from, to time.Time) (map[string]int64, error)
+}
+
+// LastLoginReader reads the caller's last successful login from the primary
+// Postgres database (refresh_token_family). ErrNotFound when there is none.
+type LastLoginReader interface {
+	LastLogin(ctx context.Context, userID string) (LastLogin, error)
 }
 
 // MitraResolver maps the principal's mitra_id to its kode mitra. The client
