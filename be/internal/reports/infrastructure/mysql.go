@@ -179,7 +179,8 @@ func (r Repository) MonthlyTransactionCounts(ctx context.Context, f domain.Filte
 
 	out := make(map[string]int64)
 	for rows.Next() {
-		var day, count sql.NullString
+		var day sql.NullTime
+		var count sql.NullString
 		if err := rows.Scan(&day, &count); err != nil {
 			return nil, err
 		}
@@ -190,7 +191,7 @@ func (r Repository) MonthlyTransactionCounts(ctx context.Context, f domain.Filte
 		if err != nil {
 			return nil, err
 		}
-		out[day.String] = n
+		out[day.Time.Format("2006-01-02")] = n
 	}
 	return out, rows.Err()
 }
