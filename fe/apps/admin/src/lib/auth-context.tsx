@@ -8,14 +8,33 @@ import {
   type ReactNode,
 } from "react"
 import { flushSync } from "react-dom"
-import type { LoginResponse, MeResponse, Scope } from "@app/contracts"
+import { SECURITY_POLICY, type LoginResponse, type MeResponse, type Scope } from "@app/contracts"
 import * as authApi from "./auth-api"
 import { queryClient } from "./query-client"
 import { refreshSession, type Session, type RefreshResult } from "./refresh-session"
 import { setOnSessionExpired } from "./authed-request"
 import { rememberAuthKind } from "./session-kind"
+import { IdleTimer } from "./idle-timer"
+import { clearSessionPolicy, rememberMe, sessionStartedAt, startSession } from "./session-policy"
 import { SessionWatchdog } from "./session-watchdog"
 import { getAccessToken, setAccessToken } from "./token-store"
+
+/** Warning shown this long before the idle logout (1 minute). */
+export const IDLE_WARNING_MS = 60_000
+
+/** Idle window for the current persistence choice (15m vs 60m). */
+export function idleMsFor(remember: boolean): number {
+  return remember
+    ? SECURITY_POLICY.sessionRememberIdleTtlMs
+    : SECURITY_POLICY.sessionIdleTtlMs
+}
+
+/** Milliseconds left until the absolute session cap, or null when unknown/past. */
+function absoluteRemainingMs(now: number = Date.now()): number | null {
+  const started = sessionStartedAt()
+  if (started === null) return null
+  return started + SECURITY_POLICY.sessionAbsoluteTtlMs - now
+}
 
 // Debug: expose boot effect result for Playwright testing
 declare global {
@@ -46,26 +65,33 @@ export interface AuthContextValue extends AuthState {
     login: string,
     password: string,
     captchaId: string,
-    captcha: string
+    captcha: string,
+    rememberMe?: boolean
   ) => Promise<LoginResponse>
   loginMitra: (
     mitraKode: string,
     username: string,
     password: string,
     captchaId: string,
-    captcha: string
+    captcha: string,
+    rememberMe?: boolean
   ) => Promise<LoginResponse>
   verifyTwoFactor: (
     challengeToken: string,
-    code: string
+    code: string,
+    rememberMe?: boolean
   ) => Promise<LoginResponse>
   verifyTwoFactorBackup: (
     challengeToken: string,
-    backupCode: string
+    backupCode: string,
+    rememberMe?: boolean
   ) => Promise<LoginResponse>
   logout: () => Promise<void>
   // Reloads /auth/me into state (after profile or photo changes); never throws.
   refreshUser: () => Promise<void>
+  // True while the idle warning modal is shown; "keep me signed in" resets it.
+  idleWarning: boolean
+  staySignedIn: () => void
   can: (resource: string, action: string) => boolean
   // Widest scope granted for the permission, or null when not granted.
   scopeOf: (resource: string, action: string) => Scope | null
@@ -78,6 +104,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     status: "loading",
     user: null,
   })
+  const [idleWarning, setIdleWarning] = useState(false)
 
   const [boot] = useState<{
     status: Promise<SettledStatus>
@@ -105,12 +132,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Automatic watchdog: fires on access token exp to refresh or expire the session
   const [watchdog] = useState(() => new SessionWatchdog())
 
+  // Idle tracker: warns 60s before the idle logout and logs out when ignored.
+  const [idleTimer] = useState(
+    () => new IdleTimer(idleMsFor(rememberMe()), IDLE_WARNING_MS)
+  )
+
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- required by WatchdogCallbacks interface
 const handleExpired = useCallback((_message?: string) => {
     watchdog.stop()
+    idleTimer.stop()
     setAccessToken(null)
+    clearSessionPolicy()
     queryClient.clear()
     setState({ status: "anonymous", user: null })
+    setIdleWarning(false)
     // Store expiry message in a cookie for the login page to display.
     // Use fixed Indonesian message as required, not the backend message.
     const fixedMessage = "Sesi Anda telah berakhir. Silakan masuk kembali."
@@ -120,7 +155,7 @@ const handleExpired = useCallback((_message?: string) => {
     } catch {
       // ignore
     }
-  }, [watchdog])
+  }, [watchdog, idleTimer])
 
   useEffect(() => {
     watchdog.setCallbacks({
@@ -170,9 +205,45 @@ const handleExpired = useCallback((_message?: string) => {
     return () => setOnSessionExpired(null)
   }, [handleExpired])
 
-  const finishLogin = useCallback(async (result: LoginResponse) => {
+  // Idle + absolute session limits run only while authenticated. Any activity
+  // resets the idle window (and cancels the warning); the absolute cap ignores
+  // activity and forces a fresh login once it is reached.
+  useEffect(() => {
+    if (state.status !== "authenticated") {
+      // handleExpired/logout already cleared the warning; just stop the timer.
+      idleTimer.stop()
+      return
+    }
+    const expireNow = () => handleExpired()
+    const remaining = absoluteRemainingMs()
+    if (remaining !== null && remaining <= 0) {
+      expireNow()
+      return
+    }
+    idleTimer.setPolicy(idleMsFor(rememberMe()), IDLE_WARNING_MS)
+    idleTimer.start({
+      onWarning: () => setIdleWarning(true),
+      onIdle: expireNow,
+    })
+    const absoluteTimer = setTimeout(expireNow, remaining ?? 2_147_483_647)
+    return () => {
+      clearTimeout(absoluteTimer)
+      idleTimer.stop()
+      setIdleWarning(false)
+    }
+  }, [state.status, idleTimer, handleExpired])
+
+  const staySignedIn = useCallback(() => {
+    setIdleWarning(false)
+    idleTimer.reset()
+  }, [idleTimer])
+
+  const finishLogin = useCallback(async (result: LoginResponse, remember: boolean) => {
     if (result.requiresTwoFactor) return result
     setAccessToken(result.accessToken)
+    // Records the persistence choice and first-login time before the idle
+    // effect runs, so it picks the matching idle window and absolute cap.
+    startSession(remember)
     watchdog.schedule(result.accessToken)
     // Drop anything cached for a previous session before the new user renders.
     queryClient.clear()
@@ -190,9 +261,13 @@ const handleExpired = useCallback((_message?: string) => {
       login: string,
       password: string,
       captchaId: string,
-      captcha: string
+      captcha: string,
+      rememberMe = false
     ) =>
-      finishLogin(await authApi.login({ login, password, captchaId, captcha })),
+      finishLogin(
+        await authApi.login({ login, password, captchaId, captcha, rememberMe }),
+        rememberMe
+      ),
     [finishLogin]
   )
 
@@ -202,7 +277,8 @@ const handleExpired = useCallback((_message?: string) => {
       username: string,
       password: string,
       captchaId: string,
-      captcha: string
+      captcha: string,
+      rememberMe = false
     ) =>
       finishLogin(
         await authApi.loginMitra({
@@ -211,36 +287,49 @@ const handleExpired = useCallback((_message?: string) => {
           password,
           captchaId,
           captcha,
-        })
+          rememberMe,
+        }),
+        rememberMe
       ),
     [finishLogin]
   )
 
   const verifyTwoFactor = useCallback(
-    async (challengeToken: string, code: string) =>
-      finishLogin(await authApi.verifyTwoFactor({ challengeToken, code })),
+    async (challengeToken: string, code: string, rememberMe = false) =>
+      finishLogin(
+        await authApi.verifyTwoFactor({ challengeToken, code, rememberMe }),
+        rememberMe
+      ),
     [finishLogin]
   )
 
   const verifyTwoFactorBackup = useCallback(
-    async (challengeToken: string, backupCode: string) =>
+    async (challengeToken: string, backupCode: string, rememberMe = false) =>
       finishLogin(
-        await authApi.verifyTwoFactorBackup({ challengeToken, backupCode })
+        await authApi.verifyTwoFactorBackup({
+          challengeToken,
+          backupCode,
+          rememberMe,
+        }),
+        rememberMe
       ),
     [finishLogin]
   )
 
   const logout = useCallback(async () => {
     watchdog.stop()
+    idleTimer.stop()
+    setIdleWarning(false)
     await authApi.logout().catch(() => undefined)
     setAccessToken(null)
+    clearSessionPolicy()
     flushSync(() => setState({ status: "anonymous", user: null }))
     // Clear any session expiry message on manual logout
     document.cookie = "sessionExpiredMessage=; path=/; max-age=0"
     // Clear only after the state flip has unmounted the admin pages: clearing
     // under mounted queries makes them refetch with no token (401 + refresh).
     queryClient.clear()
-  }, [watchdog])
+  }, [watchdog, idleTimer])
 
   const refreshUser = useCallback(async () => {
     const token = getAccessToken()
@@ -281,6 +370,8 @@ const handleExpired = useCallback((_message?: string) => {
       verifyTwoFactorBackup,
       logout,
       refreshUser,
+      idleWarning,
+      staySignedIn,
       can,
       scopeOf,
     }),
@@ -292,6 +383,8 @@ const handleExpired = useCallback((_message?: string) => {
       verifyTwoFactorBackup,
       logout,
       refreshUser,
+      idleWarning,
+      staySignedIn,
       can,
       scopeOf,
       boot.status,

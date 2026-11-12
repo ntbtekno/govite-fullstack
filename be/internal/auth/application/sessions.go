@@ -56,7 +56,7 @@ func (s *Service) loginAudit(ctx context.Context, action, login, mitraKode, outc
 // Login verifies the captcha and password; returns a session or a 2FA
 // challenge. login may be an email (contains @) or a username. The captcha is
 // checked first, so a wrong code fails before any credential lookup.
-func (s *Service) Login(ctx context.Context, login, password, captchaID, captcha string, cl domain.Client) (*domain.Session, *domain.Challenge, error) {
+func (s *Service) Login(ctx context.Context, login, password, captchaID, captcha string, cl domain.Client, remember bool) (*domain.Session, *domain.Challenge, error) {
 	if err := s.Captcha.Verify(ctx, captchaID, captcha); err != nil {
 		s.loginAudit(ctx, "auth.login.failure", login, "", "invalid_captcha", "")
 		return nil, nil, err
@@ -93,7 +93,7 @@ func (s *Service) Login(ctx context.Context, login, password, captchaID, captcha
 		ch, err := s.challenge(ctx, u)
 		return nil, ch, err
 	}
-	sess, err := s.issueSession(ctx, u, cl)
+	sess, err := s.issueSession(ctx, u, cl, remember)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -112,7 +112,7 @@ func isEmail(login string) (string, bool) {
 // and password. The captcha is checked first; the returned error is always
 // generic — the caller must never distinguish between wrong captcha, mitra,
 // identifier, or password.
-func (s *Service) LoginMitra(ctx context.Context, mitraKode, username, password, captchaID, captcha string, cl domain.Client) (*domain.Session, *domain.Challenge, error) {
+func (s *Service) LoginMitra(ctx context.Context, mitraKode, username, password, captchaID, captcha string, cl domain.Client, remember bool) (*domain.Session, *domain.Challenge, error) {
 	if err := s.Captcha.Verify(ctx, captchaID, captcha); err != nil {
 		s.loginAudit(ctx, "auth.login_mitra.failure", username, mitraKode, "invalid_captcha", "")
 		return nil, nil, err
@@ -152,7 +152,7 @@ func (s *Service) LoginMitra(ctx context.Context, mitraKode, username, password,
 		ch, err := s.challenge(ctx, u)
 		return nil, ch, err
 	}
-	sess, err := s.issueSession(ctx, u, cl)
+	sess, err := s.issueSession(ctx, u, cl, remember)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -160,7 +160,7 @@ func (s *Service) LoginMitra(ctx context.Context, mitraKode, username, password,
 	return sess, nil, nil
 }
 
-func (s *Service) issueSession(ctx context.Context, u domain.User, cl domain.Client) (*domain.Session, error) {
+func (s *Service) issueSession(ctx context.Context, u domain.User, cl domain.Client, remember bool) (*domain.Session, error) {
 	familyID := kernel.NewID()
 	refresh := s.Crypto.Token(48)
 	err := s.Tx.Do(ctx, func(ctx context.Context) error {
@@ -168,10 +168,10 @@ func (s *Service) issueSession(ctx context.Context, u domain.User, cl domain.Cli
 		if len(ua) > 512 {
 			ua = ua[:512]
 		}
-		if err := s.Repo.CreateFamily(ctx, familyID, u.ID, kernel.Ptr(ua), kernel.Ptr(cl.IP)); err != nil {
+		if err := s.Repo.CreateFamily(ctx, familyID, u.ID, kernel.Ptr(ua), kernel.Ptr(cl.IP), remember); err != nil {
 			return err
 		}
-		if err := s.Repo.AddRefreshToken(ctx, familyID, s.Crypto.HMAC(refresh), time.Now().Add(policy.Security.RefreshTokenTTL)); err != nil {
+		if err := s.Repo.AddRefreshToken(ctx, familyID, s.Crypto.HMAC(refresh), refreshExpiry(remember)); err != nil {
 			return err
 		}
 		return s.Repo.TouchLastLogin(ctx, u.ID)
@@ -180,7 +180,48 @@ func (s *Service) issueSession(ctx context.Context, u domain.User, cl domain.Cli
 		return nil, err
 	}
 	access, exp, err := s.Crypto.SignAccess(u.ID, u.RoleID, deptr(u.MitraID), familyID)
-	return &domain.Session{AccessToken: access, ExpiresIn: exp, RefreshToken: refresh, User: u}, err
+	return &domain.Session{AccessToken: access, ExpiresIn: exp, RefreshToken: refresh, User: u, Remember: remember}, err
+}
+
+// refreshExpiry is how long a newly issued refresh token stays valid. Remember
+// me keeps the long (7d) window; otherwise the token only lives as long as one
+// idle window so an abandoned session cannot be resumed later.
+func refreshExpiry(remember bool) time.Time {
+	if remember {
+		return time.Now().Add(policy.Security.RefreshTokenTTL)
+	}
+	return time.Now().Add(idleWindow(remember))
+}
+
+// idleWindow is the inactivity limit for a session: longer when remembered.
+func idleWindow(remember bool) time.Duration {
+	if remember {
+		return policy.Security.RememberIdleWindow
+	}
+	return policy.Security.IdleWindow
+}
+
+// rotateExpiry is the expiry for a rotated refresh token: the family's own
+// persistence window, clamped so it never outlives the absolute cap.
+func rotateExpiry(remember bool, familyCreatedAt time.Time) time.Time {
+	exp := time.Now().Add(idleWindow(remember))
+	if remember {
+		exp = time.Now().Add(policy.Security.RefreshTokenTTL)
+	}
+	if ttl := policy.Security.AbsoluteTTL; ttl > 0 {
+		if cap := familyCreatedAt.Add(ttl); cap.Before(exp) {
+			return cap
+		}
+	}
+	return exp
+}
+
+// absoluteExpired reports whether a family started more than the absolute
+// session cap ago. This cap ignores activity: after it, a fresh login is
+// required even for a session that never idled.
+func absoluteExpired(familyCreatedAt time.Time) bool {
+	ttl := policy.Security.AbsoluteTTL
+	return ttl > 0 && time.Since(familyCreatedAt) >= ttl
 }
 
 // deptr returns "" for a nil pointer, else the dereferenced value.
@@ -223,6 +264,11 @@ func (s *Service) Refresh(ctx context.Context, token string) (*domain.Session, e
 		if rec.ExpiresAt.Before(time.Now()) || rec.RevokedAt != nil {
 			return domain.ErrInvalidRefresh
 		}
+		// Absolute cap: past it the whole family is dead, so a session that
+		// stays continuously active still has to log in again.
+		if absoluteExpired(rec.FamilyCreatedAt) {
+			return revoke(domain.ErrInvalidRefresh)
+		}
 		if u, err = s.Repo.UserByID(ctx, rec.UserID); err != nil {
 			return domain.ErrInvalidRefresh
 		}
@@ -236,7 +282,9 @@ func (s *Service) Refresh(ctx context.Context, token string) (*domain.Session, e
 		if !ok {
 			return revoke(domain.ErrReuseDetected)
 		}
-		return s.Repo.AddRefreshToken(ctx, rec.FamilyID, nextHash, time.Now().Add(policy.Security.RefreshTokenTTL))
+		// Rotate with the family's original persistence and never past the
+		// absolute cap.
+		return s.Repo.AddRefreshToken(ctx, rec.FamilyID, nextHash, rotateExpiry(rec.Remember, rec.FamilyCreatedAt))
 	})
 	if err != nil {
 		return nil, err
@@ -245,7 +293,7 @@ func (s *Service) Refresh(ctx context.Context, token string) (*domain.Session, e
 		return nil, domainErr
 	}
 	access, exp, err := s.Crypto.SignAccess(u.ID, u.RoleID, deptr(u.MitraID), rec.FamilyID)
-	return &domain.Session{AccessToken: access, ExpiresIn: exp, RefreshToken: next, User: u}, err
+	return &domain.Session{AccessToken: access, ExpiresIn: exp, RefreshToken: next, User: u, Remember: rec.Remember}, err
 }
 
 // Logout revokes the token's family. Unknown tokens are ignored (idempotent).

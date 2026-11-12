@@ -553,6 +553,118 @@ test("manual logout does not show session expired message", async ({ page }) => 
   expect(problems).toEqual([])
 })
 
+// Sign in on /login, optionally ticking "Ingat saya".
+async function signInWithRemember(page: Page, remember: boolean) {
+  await page.goto("/login")
+  await page.getByLabel("Username atau Email").fill(email)
+  await page.getByLabel("Password").fill(password)
+  await page.getByRole("textbox", { name: "Captcha" }).fill(captcha)
+  if (remember) {
+    await page.getByLabel("Ingat saya").check()
+  }
+  await page.getByRole("button", { name: "Sign in" }).click()
+  await expect(page).toHaveURL(/\/admin\/dashboard/)
+}
+
+// The idle window (15m without remember) warns at 14m and "Tetap masuk"
+// cancels it and restarts the countdown.
+test("idle warning appears and Tetap masuk cancels the logout", async ({
+  page,
+}) => {
+  await page.clock.install()
+  await signInWithRemember(page, false)
+
+  // 14 minutes idle: one minute before the 15-minute logout.
+  await page.clock.fastForward("14:00")
+  await expect(page.getByTestId("session-timeout-modal")).toBeVisible()
+  await expect(page.getByText(/Sesi akan berakhir dalam \d+ detik/)).toBeVisible()
+
+  await page.getByTestId("stay-signed-in").click()
+  await expect(page.getByTestId("session-timeout-modal")).toHaveCount(0)
+
+  // The countdown restarted: 14 more minutes still keep the session alive.
+  await page.clock.fastForward("14:00")
+  await expect(page).toHaveURL(/\/admin\/dashboard/)
+  await expect(page.getByTestId("session-timeout-modal")).toBeVisible()
+})
+
+// An ignored warning logs out to the login page with the expired message.
+test("ignored idle warning logs out to the login page", async ({ page }) => {
+  await page.clock.install()
+  await signInWithRemember(page, false)
+
+  await page.clock.fastForward("14:00")
+  await expect(page.getByTestId("session-timeout-modal")).toBeVisible()
+
+  // Do not act: the last idle minute elapses and the session ends.
+  await page.clock.fastForward("01:05")
+  await expect(page).toHaveURL(/\/login(\?|$)/)
+  await expect(
+    page.getByText("Sesi Anda telah berakhir. Silakan masuk kembali.")
+  ).toBeVisible()
+})
+
+// "Ingat saya" decides cookie persistence: a persistent 7-day cookie vs a
+// session cookie the browser drops on close.
+test("remember-me picks a persistent cookie; default is a session cookie", async ({
+  page,
+  context,
+}) => {
+  await signInWithRemember(page, true)
+  let cookie = (await context.cookies()).find(
+    (c) => c.name === "refresh_token"
+  )
+  expect(cookie).toBeTruthy()
+  expect(cookie!.expires).toBeGreaterThan(Date.now() / 1000)
+  await page.getByRole("button", { name: /Super Admin/ }).click()
+  await page.getByRole("menuitem", { name: "Log out" }).click()
+  await expect(page).toHaveURL(/\/login(\?|$)/)
+
+  await signInWithRemember(page, false)
+  cookie = (await context.cookies()).find((c) => c.name === "refresh_token")
+  expect(cookie).toBeTruthy()
+  // -1 is a session cookie: dropped when the browser (context) closes.
+  expect(cookie!.expires).toBe(-1)
+})
+
+// A remembered session survives a browser restart; a session without "Ingat
+// saya" does not. A real browser keeps only persistent cookies across a
+// restart, so we copy exactly those into a fresh context to model it.
+test("remember-me session survives a browser restart; default does not", async ({
+  browser,
+}) => {
+  // With "Ingat saya": the refresh cookie is persistent, so it survives.
+  const remembered = await browser.newContext()
+  const rPage = await remembered.newPage()
+  await signInWithRemember(rPage, true)
+  const persistentCookies = (await remembered.cookies()).filter(
+    (c) => c.expires > 0
+  )
+  await remembered.close()
+
+  const restartedRemembered = await browser.newContext()
+  await restartedRemembered.addCookies(persistentCookies)
+  const rrPage = await restartedRemembered.newPage()
+  await rrPage.goto("/admin/dashboard")
+  await expect(rrPage).toHaveURL(/\/admin\/dashboard/)
+  await restartedRemembered.close()
+
+  // Without "Ingat saya": the refresh cookie is session-scoped, so a real
+  // browser drops it on close; only persistent cookies carry over.
+  const ephemeral = await browser.newContext()
+  const ePage = await ephemeral.newPage()
+  await signInWithRemember(ePage, false)
+  const carriedOver = (await ephemeral.cookies()).filter((c) => c.expires > 0)
+  await ephemeral.close()
+
+  const restarted = await browser.newContext()
+  await restarted.addCookies(carriedOver)
+  const rPage2 = await restarted.newPage()
+  await rPage2.goto("/admin/dashboard")
+  await expect(rPage2).toHaveURL(/\/login(\?|$)/)
+  await restarted.close()
+})
+
 // Proves pages reliably restore their real content on the same URL after reload
 // even when the boot session probe is delayed.
 test("pages restore real content at same URL after delayed reload", async ({
@@ -670,30 +782,20 @@ test("MITRA_STAFF role detail: enable permission, save, reload persists", async 
   await expect(page).toHaveURL(/\/admin\/administration\/roles\/[^/]+$/)
   await expect(page.getByRole("heading", { level: 1, name: "MITRA_STAFF" })).toBeVisible()
 
-  // Find a permission that is currently unchecked (e.g., audit.view -> "Lihat Audit Log")
-  // The checkbox should be enabled (canEditPermissions = true for MITRA_STAFF)
-  // Labels are Indonesian per permissionCatalogEntry
-  const auditViewCheckbox = page.getByLabel("Lihat Audit Log")
-  await expect(auditViewCheckbox).toBeEnabled()
-  const initiallyChecked = await auditViewCheckbox.isChecked()
-
-  // If already checked, find another unchecked permission
-  let targetCheckbox = auditViewCheckbox
-  if (initiallyChecked) {
-    // Try users.manage -> "Kelola Pengguna"
-    const usersManageCheckbox = page.getByLabel("Kelola Pengguna")
-    if (!(await usersManageCheckbox.isChecked())) {
-      targetCheckbox = usersManageCheckbox
-    } else {
-      // Try settings.manage -> "Kelola Pengaturan"
-      const settingsManageCheckbox = page.getByLabel("Kelola Pengaturan")
-      targetCheckbox = settingsManageCheckbox
-    }
+  // Pick a stable permission. The seeded database may already contain the
+  // grant, so toggle rather than assuming an unchecked baseline.
+  const candidates = ["Lihat Audit Log", "Kelola Pengguna", "Kelola Pengaturan"]
+  let targetCheckbox = page.getByLabel(candidates[0])
+  for (const label of candidates) {
+    const checkbox = page.getByLabel(label)
+    await expect(checkbox).toBeEnabled()
+    targetCheckbox = checkbox
+    break
   }
 
-  // Enable the permission
-  await targetCheckbox.check()
-  await expect(targetCheckbox).toBeChecked()
+  const desiredChecked = !(await targetCheckbox.isChecked())
+  await targetCheckbox.setChecked(desiredChecked)
+  await expect(targetCheckbox).toBeChecked({ checked: desiredChecked })
 
   // Click Save permissions
   await page.getByRole("button", { name: "Save permissions" }).click()
@@ -707,8 +809,8 @@ test("MITRA_STAFF role detail: enable permission, save, reload persists", async 
   // Wait for page to load
   await expect(page.getByRole("heading", { level: 1, name: "MITRA_STAFF" })).toBeVisible()
 
-  // Verify the permission is still checked
-  await expect(targetCheckbox).toBeChecked()
+  // Verify the changed permission persisted
+  await expect(targetCheckbox).toBeChecked({ checked: desiredChecked })
 
   expect(problems).toEqual([])
 })
@@ -802,17 +904,16 @@ async function signInMitra(page: Page) {
 
 // The mitra dashboard shows both new cards. The Login Terakhir card is filled
 // from the real session login (the refresh-token family records the client IP),
-// and the Transaksi Bulan Ini card renders one bar per day of the running month
-// from a mocked summary (the reports database is absent in e2e, so real data is
-// unavailable and we exercise the chart rendering deterministically).
+// and the Transaksi Bulan Ini card renders one bar per day of the default range
+// (1st of month to today) from a mocked summary.
 test("mitra dashboard shows Login Terakhir with IP and Transaksi Bulan Ini bars", async ({
   page,
 }) => {
   const problems = watch(page)
 
   const now = new Date()
-  const days = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()
-  const monthlyDays = Array.from({ length: days }, (_, i) => ({
+  const today = now.getDate()
+  const monthlyDays = Array.from({ length: today }, (_, i) => ({
     date: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(i + 1).padStart(2, "0")}`,
     count: i % 4,
   }))
@@ -831,6 +932,8 @@ test("mitra dashboard shows Login Terakhir with IP and Transaksi Bulan Ini bars"
           monthlyTransactions: {
             unavailable: false,
             total: monthlyDays.reduce((s, d) => s + d.count, 0),
+            totalAmount: 1234567,
+            coverage: { minDate: "2025-06-20", lastDate: "2026-08-12" },
             days: monthlyDays,
           },
         },
@@ -848,8 +951,8 @@ test("mitra dashboard shows Login Terakhir with IP and Transaksi Bulan Ini bars"
   const chartCard = page.getByTestId("transaksi-bulan-ini-card")
   await expect(chartCard).toBeVisible()
   await expect(page.getByTestId("transaksi-chart")).toBeVisible()
-  // One bar per day of the running month.
-  await expect(page.getByTestId("transaksi-bar")).toHaveCount(days)
+  // One bar per day of the default range (1st to today).
+  await expect(page.getByTestId("transaksi-bar")).toHaveCount(today)
 
   expect(problems).toEqual([])
 })
@@ -886,10 +989,16 @@ test("mitra dashboard date range applies on demand and changes bars and total", 
       monthlyTransactions: {
         unavailable: false,
         total: days.length,
+        totalAmount: days.length * 1000,
+        coverage: null,
         days,
       },
     }
   }
+
+  const today = new Date().getDate()
+  const defaultFrom = `2026-11-01`
+  const defaultTo = `2026-11-${String(today).padStart(2, "0")}`
 
   const summaryRequests: string[] = []
   await page.route("**/api/v1/dashboard/summary**", async (route) => {
@@ -897,7 +1006,7 @@ test("mitra dashboard date range applies on demand and changes bars and total", 
     summaryRequests.push(`${url.searchParams.get("from") ?? ""}..${url.searchParams.get("to") ?? ""}`)
     const from = url.searchParams.get("from")
     const to = url.searchParams.get("to")
-    const body = from && to ? summaryFor(from, to) : summaryFor("2026-11-01", "2026-11-30")
+    const body = from && to ? summaryFor(from, to) : summaryFor(defaultFrom, defaultTo)
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -909,7 +1018,8 @@ test("mitra dashboard date range applies on demand and changes bars and total", 
 
   const chartCard = page.getByTestId("transaksi-bulan-ini-card")
   await expect(chartCard).toBeVisible()
-  await expect(page.getByTestId("transaksi-bar")).toHaveCount(30)
+  // Default range is 1st to today.
+  await expect(page.getByTestId("transaksi-bar")).toHaveCount(today)
 
   const callsBefore = summaryRequests.length
 
@@ -926,11 +1036,290 @@ test("mitra dashboard date range applies on demand and changes bars and total", 
   expect(summaryRequests[summaryRequests.length - 1]).toBe("2026-11-05..2026-11-09")
 
   // The headline total follows the applied range (5 days, count 1 each).
-  await expect(chartCard).toContainText("5 transaksi")
+  await expect(chartCard).toContainText("Total transaksi: 5")
 
-  // "Bulan ini" restores the running month (30 bars again).
+  // "Bulan ini" restores the default range (1st to today).
   await page.getByRole("button", { name: "Bulan ini" }).click()
-  await expect(page.getByTestId("transaksi-bar")).toHaveCount(30)
+  await expect(page.getByTestId("transaksi-bar")).toHaveCount(today)
+
+  expect(problems).toEqual([])
+})
+
+// The dashboard headline shows both totals and a stored-data coverage line, and
+// a range reaching past today is rejected without hitting the API.
+test("mitra dashboard shows both totals and coverage, and rejects a future date", async ({
+  page,
+}) => {
+  const problems = watch(page)
+
+  const now = new Date()
+  const days = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()
+  const monthlyDays = Array.from({ length: days }, (_, i) => ({
+    date: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(i + 1).padStart(2, "0")}`,
+    count: 1,
+  }))
+  const summaryRequests: string[] = []
+  await page.route("**/api/v1/dashboard/summary**", async (route) => {
+    const url = new URL(route.request().url())
+    summaryRequests.push(`${url.searchParams.get("from") ?? ""}..${url.searchParams.get("to") ?? ""}`)
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        data: {
+          lastLogin: null,
+          monthlyTransactions: {
+            unavailable: false,
+            total: monthlyDays.length,
+            totalAmount: 2500000,
+            coverage: { minDate: "2025-06-20", lastDate: "2026-08-12" },
+            days: monthlyDays,
+          },
+        },
+      }),
+    })
+  })
+
+  await signInMitra(page)
+
+  const chartCard = page.getByTestId("transaksi-bulan-ini-card")
+  await expect(chartCard).toBeVisible()
+
+  // Both headline totals render.
+  await expect(chartCard).toContainText(`Total transaksi: ${monthlyDays.length}`)
+  await expect(chartCard).toContainText("Total nominal: Rp 2.500.000")
+
+  // The stored-data coverage line renders below the chart.
+  await expect(page.getByTestId("dashboard-coverage")).toContainText("Data tersimpan:")
+
+  const callsBefore = summaryRequests.length
+
+  // A Sampai beyond today is rejected: the apply button is disabled, the
+  // message shows, and the API is never called.
+  await page.getByLabel("Sampai").fill("2999-12-31")
+  await expect(page.getByTestId("dashboard-apply-btn")).toBeDisabled()
+  await expect(
+    page.getByText("Tanggal Sampai tidak boleh melebihi hari ini")
+  ).toBeVisible()
+  expect(summaryRequests.length).toBe(callsBefore)
+
+  expect(problems).toEqual([])
+})
+
+test("mitra dashboard limits refresh to chart, shows loader, and defaults Sampai to today", async ({
+  page,
+}) => {
+  const problems = watch(page)
+  const now = new Date(Date.now() + 8 * 60 * 60 * 1000)
+  const year = now.getUTCFullYear()
+  const month = String(now.getUTCMonth() + 1).padStart(2, "0")
+  const today = String(now.getUTCDate()).padStart(2, "0")
+  const defaultFrom = `${year}-${month}-01`
+  const defaultTo = `${year}-${month}-${today}`
+  const summaryFor = (from: string, to: string, count = 1) => {
+    const start = new Date(`${from}T00:00:00Z`)
+    const end = new Date(`${to}T00:00:00Z`)
+    const days = []
+    for (let t = start.getTime(); t <= end.getTime(); t += 86400000) {
+      days.push({ date: new Date(t).toISOString().slice(0, 10), count })
+    }
+    return {
+      unavailable: false,
+      total: days.length * count,
+      totalAmount: days.length * count * 1000,
+      coverage: null,
+      days,
+    }
+  }
+  const loginText = "10.20.30.40"
+  const requests: string[] = []
+  await page.route("**/api/v1/dashboard/summary**", async (route) => {
+    const url = new URL(route.request().url())
+    const from = url.searchParams.get("from")
+    const to = url.searchParams.get("to")
+    requests.push(`${from ?? ""}..${to ?? ""}`)
+    if (!from && !to) {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: { lastLogin: { at: "2026-11-10T08:30:00Z", ip: loginText, userAgent: "Chrome/120" }, monthlyTransactions: null } }) })
+      return
+    }
+    if (from === "2026-11-05") await new Promise((resolve) => setTimeout(resolve, 500))
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: { lastLogin: null, monthlyTransactions: summaryFor(from!, to!) } }) })
+  })
+
+  await signInMitra(page)
+  const loginCard = page.getByTestId("login-terakhir-card")
+  await expect(loginCard).toContainText(loginText)
+  await expect(page.getByLabel("Sampai")).toHaveValue(defaultTo)
+  const callsBefore = requests.length
+  await page.getByLabel("Dari").fill("2026-11-05")
+  await page.getByLabel("Sampai").fill("2026-11-09")
+  await page.getByTestId("dashboard-apply-btn").click()
+  await expect(page.getByTestId("dashboard-chart-loader")).toBeVisible()
+  await expect(page.getByTestId("transaksi-bar")).toHaveCount(5)
+  await expect(page.getByTestId("transaksi-bulan-ini-card")).toContainText("Total transaksi: 5")
+  await expect(loginCard).toContainText(loginText)
+  expect(requests.length).toBe(callsBefore + 1)
+  expect(problems).toEqual([])
+})
+
+// The dashboard range is limited to 1 month: a longer draft disables "Terapkan"
+// with an inline message and never hits the summary endpoint, while a range
+// within 1 month applies normally and changes the chart.
+test("mitra dashboard rejects a range longer than 1 month without requesting", async ({
+  page,
+}) => {
+  const problems = watch(page)
+  const now = new Date(Date.now() + 8 * 60 * 60 * 1000)
+  const year = now.getUTCFullYear()
+  const month = String(now.getUTCMonth() + 1).padStart(2, "0")
+  const today = String(now.getUTCDate()).padStart(2, "0")
+  const defaultFrom = `${year}-${month}-01`
+  const defaultTo = `${year}-${month}-${today}`
+  const summaryFor = (from: string, to: string, count = 1) => {
+    const start = new Date(`${from}T00:00:00Z`)
+    const end = new Date(`${to}T00:00:00Z`)
+    const days = []
+    for (let t = start.getTime(); t <= end.getTime(); t += 86400000) {
+      days.push({ date: new Date(t).toISOString().slice(0, 10), count })
+    }
+    return {
+      unavailable: false,
+      total: days.length * count,
+      totalAmount: days.length * count * 1000,
+      coverage: null,
+      days,
+    }
+  }
+  const requests: string[] = []
+  await page.route("**/api/v1/dashboard/summary**", async (route) => {
+    const url = new URL(route.request().url())
+    const from = url.searchParams.get("from")
+    const to = url.searchParams.get("to")
+    requests.push(`${from ?? ""}..${to ?? ""}`)
+    const monthly = from && to ? summaryFor(from, to) : summaryFor(defaultFrom, defaultTo)
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ data: { lastLogin: null, monthlyTransactions: monthly } }),
+    })
+  })
+
+  await signInMitra(page)
+
+  const chartCard = page.getByTestId("transaksi-bulan-ini-card")
+  await expect(chartCard).toBeVisible()
+  const barsBefore = await page.getByTestId("transaksi-bar").count()
+  const requestsBefore = requests.length
+
+  // A draft spanning more than 1 month (2026-06-01..2026-07-03 = 32 days):
+  // Terapkan is disabled, the 1-month message shows, and no request is made.
+  await page.getByLabel("Dari").fill("2026-06-01")
+  await page.getByLabel("Sampai").fill("2026-07-03")
+  await expect(page.getByTestId("dashboard-apply-btn")).toBeDisabled()
+  await expect(page.getByText(/maksimal 1 bulan/)).toBeVisible()
+  expect(requests.length).toBe(requestsBefore)
+  // The previous chart is untouched.
+  await expect(page.getByTestId("transaksi-bar")).toHaveCount(barsBefore)
+
+  // A draft within 1 month (2026-06-01..2026-07-02 = 31 days) applies normally.
+  await page.getByLabel("Sampai").fill("2026-07-02")
+  await expect(page.getByTestId("dashboard-apply-btn")).toBeEnabled()
+  await page.getByTestId("dashboard-apply-btn").click()
+  await expect(page.getByTestId("transaksi-bar")).toHaveCount(32)
+  expect(requests[requests.length - 1]).toBe("2026-06-01..2026-07-02")
+
+  expect(problems).toEqual([])
+})
+
+// Refetch on "Terapkan" keeps bars visible, shows "Memperbarui..." indicator,
+// and updates "Terakhir diperbarui" timestamp.
+test("mitra dashboard refetch on Terapkan keeps bars visible and shows updating indicator", async ({
+  page,
+}) => {
+  const problems = watch(page)
+  const now = new Date(Date.now() + 8 * 60 * 60 * 1000)
+  const year = now.getUTCFullYear()
+  const month = String(now.getUTCMonth() + 1).padStart(2, "0")
+  const today = String(now.getUTCDate()).padStart(2, "0")
+  const defaultFrom = `${year}-${month}-01`
+  const defaultTo = `${year}-${month}-${today}`
+  const summaryFor = (from: string, to: string, count = 1) => {
+    const start = new Date(`${from}T00:00:00Z`)
+    const end = new Date(`${to}T00:00:00Z`)
+    const days = []
+    for (let t = start.getTime(); t <= end.getTime(); t += 86400000) {
+      days.push({ date: new Date(t).toISOString().slice(0, 10), count })
+    }
+    return {
+      unavailable: false,
+      total: days.length * count,
+      totalAmount: days.length * count * 1000,
+      coverage: null,
+      days,
+    }
+  }
+  let requestCount = 0
+  await page.route("**/api/v1/dashboard/summary**", async (route) => {
+    const url = new URL(route.request().url())
+    const from = url.searchParams.get("from")
+    const to = url.searchParams.get("to")
+    requestCount++
+    const monthly = from && to ? summaryFor(from, to) : summaryFor(defaultFrom, defaultTo)
+    // Keep the refetch pending long enough to assert the stale-data/update UI.
+    if (from === "2026-06-01" && to === "2026-06-15") {
+      await new Promise((resolve) => setTimeout(resolve, 500))
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ data: { lastLogin: null, monthlyTransactions: monthly } }),
+    })
+  })
+
+  await signInMitra(page)
+
+  const loginCard = page.getByTestId("login-terakhir-card")
+  await expect(loginCard).toBeVisible()
+  const chartCard = page.getByTestId("transaksi-bulan-ini-card")
+  await expect(chartCard).toBeVisible()
+  const barsBefore = await page.getByTestId("transaksi-bar").count()
+  expect(barsBefore).toBeGreaterThan(0)
+
+  // Verify side-by-side layout on desktop viewport
+  const loginBox = await loginCard.boundingBox()
+  const chartBox = await chartCard.boundingBox()
+  expect(loginBox).not.toBeNull()
+  expect(chartBox).not.toBeNull()
+  if (loginBox && chartBox) {
+    // Login card should be to the left of chart card
+    expect(loginBox.x + loginBox.width).toBeLessThanOrEqual(chartBox.x + 20) // allow small gap
+  }
+
+  // Record initial last-sync (should be null/empty initially)
+  expect(await page.getByText(/Terakhir diperbarui:/).count()).toBe(0) // initially empty
+
+  // Change date range and click Terapkan
+  await page.getByLabel("Dari").fill("2026-06-01")
+  await page.getByLabel("Sampai").fill("2026-06-15")
+  await page.getByTestId("dashboard-apply-btn").click()
+
+  // During refetch: bars should remain visible, "Memperbarui..." indicator appears
+  await expect(page.getByTestId("transaksi-bar").first()).toBeVisible()
+  await expect(page.getByText("Memperbarui…")).toBeVisible({ timeout: 5000 })
+
+  // Wait for refetch to complete
+  await expect(page.getByText("Memperbarui…")).toBeHidden({ timeout: 10000 })
+
+  // After refetch: bars still visible, last-sync updated
+  await expect(page.getByTestId("transaksi-bar").first()).toBeVisible()
+  const barsAfter = await page.getByTestId("transaksi-bar").count()
+  expect(barsAfter).toBeGreaterThan(0)
+
+  // Last-sync timestamp should now be visible
+  await expect(page.locator('text=/Terakhir diperbarui:/')).toBeVisible()
+  const lastSyncAfter = await page.locator('text=/Terakhir diperbarui:/').textContent()
+  // Intl Indonesian locale uses dot separators (HH.MM.SS) in Chromium.
+  expect(lastSyncAfter).toMatch(/Terakhir diperbarui: \d{2}[.:]\d{2}[.:]\d{2}/)
 
   expect(problems).toEqual([])
 })

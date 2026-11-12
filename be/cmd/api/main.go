@@ -52,7 +52,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	policy.InitSecurity(cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
+	policy.InitSecurity(cfg.AccessTokenTTL, cfg.RefreshTokenTTL, cfg.SessionIdleTTL, cfg.SessionRememberIdleTTL, cfg.SessionAbsoluteTTL)
 	setupLogger(cfg.LogLevel)
 	if cfg.SentryDSN != "" {
 		if err := sentry.Init(sentry.ClientOptions{Dsn: cfg.SentryDSN, Environment: cfg.SentryEnvironment, EnableTracing: true}); err != nil {

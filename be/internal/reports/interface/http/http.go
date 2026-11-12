@@ -16,7 +16,10 @@ const (
 	defaultPageSize = 10
 	maxPageSize     = 100
 	dateLayout      = "2006-01-02"
-	maxRangeDays    = 92
+	// maxRangeDays is the maximum difference (to - from) in days. A range of
+	// 1 Jul .. 1 Aug is 31 days and is accepted; 1 Jul .. 2 Aug is 32 days and
+	// is rejected.
+	maxRangeDays = 31
 )
 
 type Handler struct {
@@ -48,9 +51,9 @@ func (q dashboardQuery) parse() (*time.Time, *time.Time, error) {
 		return nil, nil, httpx.Validation("from: cannot be after to")
 	}
 	if from != nil && to != nil {
-		days := int(to.Sub(*from).Hours()/24) + 1
-		if days > maxRangeDays {
-			return nil, nil, httpx.Validation("range: cannot exceed 92 days")
+		spanDays := int(to.Sub(*from).Hours() / 24)
+		if spanDays > maxRangeDays {
+			return nil, nil, httpx.Validation("range: cannot exceed 31 days")
 		}
 	}
 	return from, to, nil

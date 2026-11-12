@@ -14,12 +14,23 @@ export interface DailyPoint {
 }
 
 /**
+ * The bounds of the mitra's stored transaction data (not the applied range).
+ * `null` when the mitra has no stored rows or the reports DB is absent.
+ */
+export interface DataCoverage {
+  minDate: string
+  lastDate: string
+}
+
+/**
  * The mitra monthly transaction summary. `unavailable` mirrors the report
  * pages' 503 REPORTS_UNAVAILABLE: the reports database is not configured.
  */
 export interface MonthlyTransactions {
   unavailable: boolean
   total: number
+  totalAmount: number
+  coverage: DataCoverage | null
   days: DailyPoint[]
 }
 

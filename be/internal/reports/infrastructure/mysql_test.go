@@ -75,3 +75,59 @@ func TestMonthlyTransactionCountsNormalizesParseTimeDateKey(t *testing.T) {
 		t.Fatalf("RFC3339 key must not escape the repository boundary: %#v", got)
 	}
 }
+
+// coverageDriver returns a MIN/MAX row of time.Time values (parseTime=true).
+type coverageDriver struct{}
+
+func (coverageDriver) Open(string) (driver.Conn, error) { return coverageConn{}, nil }
+
+type coverageConn struct{}
+
+func (coverageConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
+func (coverageConn) Close() error                        { return nil }
+func (coverageConn) Begin() (driver.Tx, error)           { return nil, driver.ErrSkip }
+
+func (coverageConn) QueryContext(context.Context, string, []driver.NamedValue) (driver.Rows, error) {
+	return &coverageRows{}, nil
+}
+
+// coverageRows yields the MIN/MAX pair as parseTime=true exposes them: bare
+// time.Time values.
+type coverageRows struct{ done bool }
+
+func (coverageRows) Columns() []string { return []string{"min", "max"} }
+func (coverageRows) Close() error      { return nil }
+
+func (r *coverageRows) Next(dest []driver.Value) error {
+	if r.done {
+		return io.EOF
+	}
+	r.done = true
+	dest[0] = time.Date(2025, 6, 20, 0, 0, 0, 0, time.FixedZone("WITA", 8*60*60))
+	dest[1] = time.Date(2026, 8, 12, 0, 0, 0, 0, time.FixedZone("WITA", 8*60*60))
+	return nil
+}
+
+// TestMonthlyTransactionCoverageNormalizesParseTimeDates proves the coverage
+// MIN/MAX scan path normalizes parseTime=true time.Time values to YYYY-MM-DD.
+func TestMonthlyTransactionCoverageNormalizesParseTimeDates(t *testing.T) {
+	const driverName = "govite-monthly-coverage-regression"
+	sql.Register(driverName, coverageDriver{})
+	db, err := sql.Open(driverName, "")
+	if err != nil {
+		t.Fatalf("open fake mysql: %v", err)
+	}
+	defer db.Close()
+
+	repo := Repository{DB: db}
+	min, max, ok, err := repo.MonthlyTransactionCoverage(context.Background(), domain.Filter{MitraKode: "010"})
+	if err != nil {
+		t.Fatalf("MonthlyTransactionCoverage: %v", err)
+	}
+	if !ok {
+		t.Fatalf("coverage must be ok when MIN/MAX are present")
+	}
+	if min != "2025-06-20" || max != "2026-08-12" {
+		t.Fatalf("want 2025-06-20..2026-08-12, got %s..%s", min, max)
+	}
+}

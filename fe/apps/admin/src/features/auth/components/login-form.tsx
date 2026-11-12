@@ -3,6 +3,7 @@ import { SECURITY_POLICY } from "@app/contracts"
 import { Link, useNavigate, useRouter } from "@tanstack/react-router"
 import { QRCodeSVG } from "qrcode.react"
 import { Button } from "@app/ui/components/button"
+import { Checkbox } from "@app/ui/components/checkbox"
 import { Input } from "@app/ui/components/input"
 import { Label } from "@app/ui/components/label"
 import { useAuth } from "@/lib/auth-context"
@@ -27,6 +28,7 @@ export function LoginForm({
   const captchaRef = useRef<CaptchaFieldHandle>(null)
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
+  const [rememberMe, setRememberMe] = useState(false)
   const [useBackup, setUseBackup] = useState(false)
   const [backupCodes, setBackupCodes] = useState<string[] | null>(null)
   const [challenge, setChallenge] = useState<{
@@ -71,13 +73,15 @@ export function LoginForm({
               String(form.get("username")),
               String(form.get("password")),
               captchaId,
-              captcha
+              captcha,
+              rememberMe
             )
           : await login(
               String(form.get("login")),
               String(form.get("password")),
               captchaId,
-              captcha
+              captcha,
+              rememberMe
             )
       if (result.requiresTwoFactor) {
         setChallenge({
@@ -114,9 +118,14 @@ export function LoginForm({
       const result = useBackup
         ? await verifyTwoFactorBackup(
             challenge.token,
-            String(form.get("backupCode"))
+            String(form.get("backupCode")),
+            rememberMe
           )
-        : await verifyTwoFactor(challenge.token, String(form.get("code")))
+        : await verifyTwoFactor(
+            challenge.token,
+            String(form.get("code")),
+            rememberMe
+          )
       if (result.requiresTwoFactor) return
       if (result.backupCodes?.length) setBackupCodes(result.backupCodes)
       else await finish()
@@ -271,6 +280,16 @@ export function LoginForm({
         />
       </div>
       <CaptchaField ref={captchaRef} error={!!error} />
+      <div className="flex items-center gap-2">
+        <Checkbox
+          id="rememberMe"
+          checked={rememberMe}
+          onCheckedChange={(v) => setRememberMe(v === true)}
+        />
+        <Label htmlFor="rememberMe" className="text-sm font-normal">
+          Ingat saya
+        </Label>
+      </div>
       {error && (
         <p id="login-error" role="alert" className="text-sm text-destructive">
           {error}

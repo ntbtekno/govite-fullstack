@@ -56,6 +56,9 @@ func render() string {
 	w("  inviteTtlMs: %d,\n", s.InviteTTL.Milliseconds())
 	w("  emailVerificationTtlMs: %d,\n", s.EmailVerificationTTL.Milliseconds())
 	w("  maxCodeAttempts: %d,\n", s.MaxCodeAttempts)
+	w("  sessionIdleTtlMs: %d,\n", s.IdleWindow.Milliseconds())
+	w("  sessionRememberIdleTtlMs: %d,\n", s.RememberIdleWindow.Milliseconds())
+	w("  sessionAbsoluteTtlMs: %d,\n", s.AbsoluteTTL.Milliseconds())
 	w("} as const\n")
 	return b.String()
 }

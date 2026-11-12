@@ -132,3 +132,40 @@ func TestMonthlyCountsEscapesKodeWildcards(t *testing.T) {
 		t.Fatalf("want escaped prefix, got %#v", args[0])
 	}
 }
+
+func TestMonthlyAmountScopesAndSumsTxamt(t *testing.T) {
+	from := time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 11, 6, 0, 0, 0, 0, time.UTC)
+	sql, args := BuildMonthlyAmount(domain.Filter{MitraKode: "010", From: &from, To: &to})
+
+	if args[0] != "01041%" {
+		t.Fatalf("first arg must be the mitra VA prefix, got %#v", args)
+	}
+	if !strings.Contains(sql, "SUM(txamt)") {
+		t.Fatalf("amount query must sum txamt: %s", sql)
+	}
+	if strings.Contains(sql, "GROUP BY") {
+		t.Fatalf("amount query must not group: %s", sql)
+	}
+	// Same [from, to) window as the counts query.
+	if len(args) != 3 {
+		t.Fatalf("want prefix + from + to args, got %#v", args)
+	}
+}
+
+func TestMonthlyCoverageHasNoDateBound(t *testing.T) {
+	from := time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 11, 6, 0, 0, 0, 0, time.UTC)
+	sql, args := BuildMonthlyCoverage(domain.Filter{MitraKode: "010", From: &from, To: &to})
+
+	if !strings.Contains(sql, "MIN(txdtstlmn)") || !strings.Contains(sql, "MAX(txdtstlmn)") {
+		t.Fatalf("coverage query must select MIN/MAX: %s", sql)
+	}
+	// Coverage spans all data: the range bound is dropped, leaving only the prefix.
+	if strings.Contains(sql, "txdtstlmn >= ?") || strings.Contains(sql, "txdtstlmn < ?") {
+		t.Fatalf("coverage must not be date-bounded: %s", sql)
+	}
+	if len(args) != 1 || args[0] != "01041%" {
+		t.Fatalf("coverage args must be only the mitra prefix, got %#v", args)
+	}
+}

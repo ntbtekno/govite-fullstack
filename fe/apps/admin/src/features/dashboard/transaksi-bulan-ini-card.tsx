@@ -1,4 +1,4 @@
-import { AlertCircleIcon, CalendarIcon, RefreshCwIcon, CheckIcon } from "lucide-react"
+import { AlertCircleIcon, CalendarIcon, RefreshCwIcon, CheckIcon, Loader2Icon, ClockIcon } from "lucide-react"
 import {
   Card,
   CardContent,
@@ -9,20 +9,31 @@ import {
 import { Button } from "@app/ui/components/button"
 import { Input } from "@app/ui/components/input"
 import { Label } from "@app/ui/components/label"
+import { Skeleton } from "@app/ui/components/skeleton"
 import type { MonthlyTransactions } from "@/lib/dashboard-api"
 
 const amountFmt = new Intl.NumberFormat("id-ID")
 
+const rupiah = (n: number) => `Rp ${amountFmt.format(n)}`
+
 function dayLabel(date: string): string {
-  // date is YYYY-MM-DD from the API; render the day number only.
   const parts = date.split("-")
   return parts.length === 3 ? String(Number(parts[2])) : date
+}
+
+function formatDate(date: string): string {
+  const d = new Date(date + "T00:00:00")
+  if (isNaN(d.getTime())) return date
+  return new Intl.DateTimeFormat("id-ID", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  }).format(d)
 }
 
 function formatRangeLabel(from: string, to: string): string {
   const fromDate = new Date(from + "T00:00:00")
   const toDate = new Date(to + "T00:00:00")
-  // Check for invalid dates
   if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
     return ""
   }
@@ -40,13 +51,19 @@ function isDefaultRange(from: string | undefined, to: string | undefined, defaul
 
 interface TransaksiBulanIniCardProps {
   monthly: MonthlyTransactions
+  isLoading: boolean
+  isRefetching: boolean
+  lastSync: string | null
   draftFrom?: string
   draftTo?: string
   appliedFrom?: string
   appliedTo?: string
   defaultFrom?: string
   defaultTo?: string
+  maxDate?: string
   isDraftInvalid?: boolean
+  invalidMessage?: string
+  serverErrorMessage?: string | null
   hasCustomRange?: boolean
   onDraftFromChange?: (value: string) => void
   onDraftToChange?: (value: string) => void
@@ -56,13 +73,19 @@ interface TransaksiBulanIniCardProps {
 
 export function TransaksiBulanIniCard({
   monthly,
+  isLoading,
+  isRefetching,
+  lastSync,
   draftFrom = "",
   draftTo = "",
   appliedFrom,
   appliedTo,
   defaultFrom,
   defaultTo,
+  maxDate,
   isDraftInvalid = false,
+  invalidMessage = "Tanggal Dari tidak boleh melebihi tanggal Sampai",
+  serverErrorMessage = null,
   hasCustomRange = false,
   onDraftFromChange,
   onDraftToChange,
@@ -90,13 +113,38 @@ export function TransaksiBulanIniCard({
     )
   }
 
+  // Skeleton while initial load
+  if (isLoading) {
+    return (
+      <Card data-testid="transaksi-bulan-ini-card" className="md:col-span-3">
+        <CardHeader>
+          <CardDescription>Transaksi Bulan Ini</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div data-testid="dashboard-chart-loader" className="sr-only" aria-live="polite">Memuat grafik…</div>
+          <div className="flex h-40 items-end gap-[3px]">
+            {Array.from({ length: 30 }).map((_, i) => (
+              <Skeleton key={i} className="flex-1 rounded-t" style={{ height: `${((i * 37) % 80) + 10}%` }} />
+            ))}
+          </div>
+          <div className="mt-1 flex justify-between text-xs text-muted-foreground">
+            <Skeleton className="h-3 w-8" />
+            <Skeleton className="h-3 w-8" />
+          </div>
+          <Skeleton className="mt-3 h-4 w-32" />
+        </CardContent>
+      </Card>
+    )
+  }
+
   const max = monthly.days.reduce((m, d) => Math.max(m, d.count), 0)
-  // Every bar keeps a visible minimum so empty days still show a stub.
   const heightPct = (count: number) => (max > 0 ? (count / max) * 100 : 0)
 
   const isDefault = isDefaultRange(appliedFrom, appliedTo, defaultFrom, defaultTo)
   const rangeLabel = appliedFrom && appliedTo ? formatRangeLabel(appliedFrom, appliedTo) : ""
   const cardTitle = isDefault ? "Transaksi Bulan Ini" : `Transaksi ${rangeLabel}`
+
+  const coverage = monthly.coverage
 
   return (
     <Card data-testid="transaksi-bulan-ini-card" className="md:col-span-3">
@@ -113,6 +161,7 @@ export function TransaksiBulanIniCard({
               size="sm"
               onClick={onReset}
               className="gap-1.5 text-xs"
+              disabled={isRefetching}
             >
               <RefreshCwIcon className="size-3.5" />
               Bulan ini
@@ -129,9 +178,10 @@ export function TransaksiBulanIniCard({
               type="date"
               aria-label="Dari"
               value={draftFrom}
+              max={maxDate}
               onChange={(e) => onDraftFromChange?.(e.target.value)}
               className="w-36 text-xs"
-              disabled={monthly.unavailable}
+              disabled={monthly.unavailable || isRefetching}
             />
           </div>
           <div className="flex items-center gap-1.5">
@@ -143,36 +193,65 @@ export function TransaksiBulanIniCard({
               type="date"
               aria-label="Sampai"
               value={draftTo}
+              max={maxDate}
               onChange={(e) => onDraftToChange?.(e.target.value)}
               className="w-36 text-xs"
-              disabled={monthly.unavailable}
+              disabled={monthly.unavailable || isRefetching}
             />
           </div>
           <Button
             type="button"
             size="sm"
             onClick={onApply}
-            disabled={isDraftInvalid}
+            disabled={isDraftInvalid || isRefetching}
             className="gap-1.5"
             data-testid="dashboard-apply-btn"
           >
-            <CheckIcon className="size-3.5" />
+            {isRefetching ? (
+              <Loader2Icon className="size-3.5 animate-spin" />
+            ) : (
+              <CheckIcon className="size-3.5" />
+            )}
             Terapkan
           </Button>
         </div>
-        {isDraftInvalid && (
-          <p role="alert" className="text-xs font-medium text-destructive">
-            Tanggal Dari tidak boleh melebihi tanggal Sampai
-          </p>
-        )}
-        <CardTitle className="text-2xl">
-          {amountFmt.format(monthly.total)} transaksi
-        </CardTitle>
+        <div className="flex flex-wrap items-center gap-2 justify-between">
+          {isDraftInvalid && (
+            <p role="alert" className="text-xs font-medium text-destructive">
+              {invalidMessage}
+            </p>
+          )}
+          {!isDraftInvalid && serverErrorMessage && (
+            <p role="alert" data-testid="dashboard-server-error" className="text-xs font-medium text-destructive">
+              {serverErrorMessage}
+            </p>
+          )}
+          {lastSync && (
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground ml-auto">
+              <ClockIcon className="size-3.5" />
+              <span>Terakhir diperbarui: {lastSync}</span>
+            </div>
+          )}
+        </div>
+        <div className="flex flex-col gap-0.5">
+          <CardTitle className="text-2xl">
+            Total transaksi: {amountFmt.format(monthly.total)}
+          </CardTitle>
+          <CardTitle className="text-2xl">
+            Total nominal: {rupiah(monthly.totalAmount)}
+          </CardTitle>
+        </div>
       </CardHeader>
       <CardContent>
+        {isRefetching && (
+          <div data-testid="dashboard-chart-loader" className="mb-2 flex items-center gap-2 text-xs text-muted-foreground" aria-live="polite">
+            <Loader2Icon className="size-3.5 animate-spin" /> Memuat grafik…
+          </div>
+        )}
         <div
           data-testid="transaksi-chart"
-          className="flex h-40 items-end gap-[3px]"
+          className="relative flex h-40 items-end gap-[3px]"
+          style={{ opacity: isRefetching ? 0.7 : 1 }}
         >
           {monthly.days.map((d) => (
             <div
@@ -180,12 +259,21 @@ export function TransaksiBulanIniCard({
               data-testid="transaksi-bar"
               title={`${d.date} — ${amountFmt.format(d.count)} transaksi`}
               aria-label={`${d.date} — ${amountFmt.format(d.count)} transaksi`}
-              className="flex-1 rounded-t bg-primary/70"
+              className="flex-1 rounded-t bg-primary/70 transition-opacity"
               style={{
                 height: d.count > 0 ? `${heightPct(d.count)}%` : "2px",
               }}
             />
           ))}
+          {isRefetching && (
+            <div
+              className="absolute top-2 right-2 flex items-center gap-1.5 bg-background/90 backdrop-blur-sm rounded-md px-2 py-1 text-xs text-muted-foreground border"
+              aria-live="polite"
+            >
+              <Loader2Icon className="size-3.5 animate-spin" />
+              <span>Memperbarui…</span>
+            </div>
+          )}
         </div>
         <div className="mt-1 flex justify-between text-xs text-muted-foreground">
           <span>{monthly.days[0] ? dayLabel(monthly.days[0].date) : ""}</span>
@@ -198,6 +286,11 @@ export function TransaksiBulanIniCard({
         {max === 0 && (
           <p className="mt-3 text-sm text-muted-foreground">
             Belum ada transaksi pada rentang ini.
+          </p>
+        )}
+        {coverage && (
+          <p data-testid="dashboard-coverage" className="mt-3 text-xs text-muted-foreground">
+            Data tersimpan: {formatDate(coverage.minDate)} – {formatDate(coverage.lastDate)}
           </p>
         )}
       </CardContent>

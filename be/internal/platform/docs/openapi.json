@@ -6292,7 +6292,7 @@
             }
           },
           "400": {
-            "description": "Validation error: from/to must be YYYY-MM-DD, from must not be after to, range must not exceed 92 days",
+            "description": "Validation error: from/to must be YYYY-MM-DD, from must not be after to, range must not exceed 31 days (1 month)",
             "content": {
               "application/json": {
                 "schema": {
@@ -6685,6 +6685,10 @@
           "captcha": {
             "type": "string",
             "description": "The characters shown in the captcha image."
+          },
+          "rememberMe": {
+            "type": "boolean",
+            "description": "Keep the session across browser restarts (7-day refresh cookie). Defaults to false."
           }
         }
       },
@@ -6717,6 +6721,10 @@
           "captcha": {
             "type": "string",
             "description": "The characters shown in the captcha image."
+          },
+          "rememberMe": {
+            "type": "boolean",
+            "description": "Keep the session across browser restarts (7-day refresh cookie). Defaults to false."
           }
         }
       },
@@ -6770,6 +6778,10 @@
           "code": {
             "type": "string",
             "pattern": "^[0-9]{6}$"
+          },
+          "rememberMe": {
+            "type": "boolean",
+            "description": "Keep the session across browser restarts (7-day refresh cookie). Defaults to false."
           }
         }
       },
@@ -6785,6 +6797,10 @@
           },
           "backupCode": {
             "type": "string"
+          },
+          "rememberMe": {
+            "type": "boolean",
+            "description": "Keep the session across browser restarts (7-day refresh cookie). Defaults to false."
           }
         }
       },

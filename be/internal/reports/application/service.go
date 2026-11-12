@@ -111,7 +111,7 @@ func (s *Service) monthly(ctx context.Context, from, to *time.Time) *domain.Mont
 	}
 
 	now := time.Now().In(makassar)
-	firstOfMonth, lastOfMonth, _ := monthWindow(now)
+	firstOfMonth, _, _ := monthWindow(now)
 
 	// Determine effective bounds
 	var effFrom, effTo time.Time
@@ -123,7 +123,8 @@ func (s *Service) monthly(ctx context.Context, from, to *time.Time) *domain.Mont
 	if to != nil {
 		effTo = time.Date(to.Year(), to.Month(), to.Day(), 0, 0, 0, 0, makassar)
 	} else {
-		effTo = lastOfMonth
+		// Default to today (not end of month) so the default range is 1st..today
+		effTo = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, makassar)
 	}
 
 	// to is inclusive, so add one day for the exclusive upper bound in the query
@@ -136,6 +137,19 @@ func (s *Service) monthly(ctx context.Context, from, to *time.Time) *domain.Mont
 		return &domain.MonthlyTransactions{Unavailable: true, Days: []domain.DailyPoint{}}
 	}
 
+	amount, err := s.Repo.MonthlyTransactionTotal(ctx, domain.Filter{MitraKode: kode}, effFrom, queryTo)
+	if err != nil {
+		return &domain.MonthlyTransactions{Unavailable: true, Days: []domain.DailyPoint{}}
+	}
+
+	// Coverage spans ALL of the mitra's stored rows, not just the applied range.
+	var cov *domain.Coverage
+	if minDate, maxDate, ok, err := s.Repo.MonthlyTransactionCoverage(ctx, domain.Filter{MitraKode: kode}); err != nil {
+		return &domain.MonthlyTransactions{Unavailable: true, Days: []domain.DailyPoint{}}
+	} else if ok {
+		cov = &domain.Coverage{MinDate: minDate, LastDate: maxDate}
+	}
+
 	days := make([]domain.DailyPoint, 0, daysInRange)
 	var total int64
 	for d := 0; d < daysInRange; d++ {
@@ -145,7 +159,7 @@ func (s *Service) monthly(ctx context.Context, from, to *time.Time) *domain.Mont
 		total += n
 		days = append(days, domain.DailyPoint{Date: key, Count: n})
 	}
-	return &domain.MonthlyTransactions{Total: total, Days: days}
+	return &domain.MonthlyTransactions{Total: total, TotalAmount: amount, Coverage: cov, Days: days}
 }
 
 // monthWindow returns the first day, the last day and the number of days of

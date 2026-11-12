@@ -108,3 +108,22 @@ func BuildMonthlyCounts(f domain.Filter) (string, []any) {
 		GROUP BY DATE(txdtstlmn)
 		ORDER BY d`, args
 }
+
+// BuildMonthlyAmount sums txamt for the mitra's settled rows over the same
+// [from, to) window and scope as BuildMonthlyCounts.
+func BuildMonthlyAmount(f domain.Filter) (string, []any) {
+	where, args := paymentWhere(f)
+	return `SELECT COALESCE(SUM(txamt), 0)
+		FROM t_transaksi` + where, args
+}
+
+// BuildMonthlyCoverage returns the MIN and MAX settlement dates over ALL of the
+// mitra's stored rows (no date bound): the dashboard shows this so the user
+// knows how far back the stored data goes, independent of the applied range.
+func BuildMonthlyCoverage(f domain.Filter) (string, []any) {
+	f.From = nil
+	f.To = nil
+	where, args := paymentWhere(f)
+	return `SELECT MIN(txdtstlmn), MAX(txdtstlmn)
+		FROM t_transaksi` + where, args
+}

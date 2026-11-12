@@ -37,7 +37,7 @@ func (s *Service) challenge(ctx context.Context, u domain.User) (*domain.Challen
 
 // VerifyTwoFactor completes a challenge with a TOTP code. First-time setup
 // enables 2FA and returns backup codes once.
-func (s *Service) VerifyTwoFactor(ctx context.Context, challengeToken, code string, cl domain.Client) (*domain.Session, error) {
+func (s *Service) VerifyTwoFactor(ctx context.Context, challengeToken, code string, cl domain.Client, remember bool) (*domain.Session, error) {
 	tok, err := s.FindLink(ctx, domain.PurposeTwoFactor, challengeToken)
 	if err != nil {
 		return nil, domain.ErrInvalidTOTP
@@ -70,7 +70,7 @@ func (s *Service) VerifyTwoFactor(ctx context.Context, challengeToken, code stri
 	if err != nil || !u.CanAuthenticate() {
 		return nil, domain.ErrInvalidCredentials
 	}
-	sess, err := s.issueSession(ctx, u, cl)
+	sess, err := s.issueSession(ctx, u, cl, remember)
 	if sess != nil {
 		sess.BackupCodes = codes
 	}
@@ -78,7 +78,7 @@ func (s *Service) VerifyTwoFactor(ctx context.Context, challengeToken, code stri
 }
 
 // VerifyBackupCode completes a challenge with a single-use backup code.
-func (s *Service) VerifyBackupCode(ctx context.Context, challengeToken, code string, cl domain.Client) (*domain.Session, error) {
+func (s *Service) VerifyBackupCode(ctx context.Context, challengeToken, code string, cl domain.Client, remember bool) (*domain.Session, error) {
 	tok, err := s.FindLink(ctx, domain.PurposeTwoFactor, challengeToken)
 	if err != nil {
 		return nil, domain.ErrInvalidTOTP
@@ -102,7 +102,7 @@ func (s *Service) VerifyBackupCode(ctx context.Context, challengeToken, code str
 	if err != nil || !u.CanAuthenticate() {
 		return nil, domain.ErrInvalidCredentials
 	}
-	return s.issueSession(ctx, u, cl)
+	return s.issueSession(ctx, u, cl, remember)
 }
 
 func (s *Service) backupHash(code string) string {

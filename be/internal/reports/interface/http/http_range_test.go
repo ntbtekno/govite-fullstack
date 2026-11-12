@@ -3,6 +3,7 @@ package http_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,6 +20,12 @@ type rangeRepo struct {
 	gotTo   time.Time
 	gotKode string
 	calls   int
+
+	amount     float64
+	gotMinDate string
+	gotMaxDate string
+	hasCover   bool
+	coverCalls int
 }
 
 func (r *rangeRepo) Billing(context.Context, domain.Filter) ([]domain.BillingRow, domain.Summary, error) {
@@ -37,19 +44,42 @@ func (r *rangeRepo) MonthlyTransactionCounts(_ context.Context, f domain.Filter,
 	return r.counts, nil
 }
 
+func (r *rangeRepo) MonthlyTransactionTotal(_ context.Context, f domain.Filter, from, to time.Time) (float64, error) {
+	r.gotKode = f.MitraKode
+	r.gotFrom = from
+	r.gotTo = to
+	return r.amount, nil
+}
+
+func (r *rangeRepo) MonthlyTransactionCoverage(_ context.Context, f domain.Filter) (string, string, bool, error) {
+	r.gotKode = f.MitraKode
+	r.coverCalls++
+	return r.gotMinDate, r.gotMaxDate, r.hasCover, nil
+}
+
 func decodeMonthly(t *testing.T, data map[string]json.RawMessage) struct {
-	Unavailable bool  `json:"unavailable"`
-	Total       int64 `json:"total"`
-	Days        []struct {
+	Unavailable bool    `json:"unavailable"`
+	Total       int64   `json:"total"`
+	TotalAmount float64 `json:"totalAmount"`
+	Coverage    *struct {
+		MinDate  string `json:"minDate"`
+		LastDate string `json:"lastDate"`
+	} `json:"coverage"`
+	Days []struct {
 		Date  string `json:"date"`
 		Count int64  `json:"count"`
 	} `json:"days"`
 } {
 	t.Helper()
 	var monthly struct {
-		Unavailable bool  `json:"unavailable"`
-		Total       int64 `json:"total"`
-		Days        []struct {
+		Unavailable bool    `json:"unavailable"`
+		Total       int64   `json:"total"`
+		TotalAmount float64 `json:"totalAmount"`
+		Coverage    *struct {
+			MinDate  string `json:"minDate"`
+			LastDate string `json:"lastDate"`
+		} `json:"coverage"`
+		Days []struct {
 			Date  string `json:"date"`
 			Count int64  `json:"count"`
 		} `json:"days"`
@@ -123,11 +153,8 @@ func TestDashboardCustomRangeScopesToPrincipalMitra(t *testing.T) {
 }
 
 // (c) Only one bound supplied: the other side follows the running month edge.
-// A missing `from` starts at the 1st; a missing `to` ends at the last day.
+// A missing `from` starts at the 1st; a missing `to` ends at today.
 func TestDashboardOneSidedRangeFollowsRunningMonthEdges(t *testing.T) {
-	now := time.Now().In(makassarForTest())
-	firstOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, makassarForTest())
-	lastOfMonth := firstOfMonth.AddDate(0, 1, -1)
 
 	t.Run("from only keeps the first day of the running month", func(t *testing.T) {
 		repo := &rangeRepo{counts: nil}
@@ -150,7 +177,7 @@ func TestDashboardOneSidedRangeFollowsRunningMonthEdges(t *testing.T) {
 		}
 	})
 
-	t.Run("to only keeps the last day of the running month", func(t *testing.T) {
+	t.Run("to only keeps today (not end of month)", func(t *testing.T) {
 		repo := &rangeRepo{counts: nil}
 		svc := &application.Service{Repo: repo, Mitra: fakeMitra{}, LastLogin: fakeLastLogin{row: nil}}
 		app := newMeApp(t, svc, mitraPrincipal())
@@ -162,11 +189,13 @@ func TestDashboardOneSidedRangeFollowsRunningMonthEdges(t *testing.T) {
 		if got := repo.gotFrom.Format("2006-01-02"); got != "2026-11-02" {
 			t.Fatalf("from must stay 2026-11-02, got %s", got)
 		}
-		// The missing `to` defaults to the running month's last day, and the
+		// The missing `to` defaults to today (in test timezone), and the
 		// exclusive bound is one day later.
-		wantLast := lastOfMonth.AddDate(0, 0, 1)
-		if !repo.gotTo.Equal(wantLast) {
-			t.Fatalf("missing to must default to the running month's last day, got %s", repo.gotTo.Format("2006-01-02"))
+		wantToday := time.Now().In(makassarForTest())
+		wantToday = time.Date(wantToday.Year(), wantToday.Month(), wantToday.Day(), 0, 0, 0, 0, makassarForTest())
+		wantTo := wantToday.AddDate(0, 0, 1)
+		if !repo.gotTo.Equal(wantTo) {
+			t.Fatalf("missing to must default to today, got %s", repo.gotTo.Format("2006-01-02"))
 		}
 	})
 }
@@ -211,42 +240,42 @@ func TestDashboardFromAfterToIsBadRequest(t *testing.T) {
 	}
 }
 
-// (f) A 93-day range is a 400 VALIDATION_ERROR; 92 days is accepted.
-func TestDashboardRangeOver92DaysIsBadRequest(t *testing.T) {
-	t.Run("93 days rejected", func(t *testing.T) {
+// (f) The range is limited to 1 month: a 32-day difference (to - from) is a
+// 400 VALIDATION_ERROR; a 31-day difference is accepted.
+func TestDashboardRangeOver31DaysIsBadRequest(t *testing.T) {
+	t.Run("32 days rejected", func(t *testing.T) {
 		repo := &rangeRepo{}
 		svc := &application.Service{Repo: repo, Mitra: fakeMitra{}, LastLogin: fakeLastLogin{row: nil}}
 		app := newMeApp(t, svc, mitraPrincipal())
 
-		// 2026-09-01..2026-12-02 inclusive = 93 days.
-		status, _, code := get(t, app, "/dashboard/summary?from=2026-09-01&to=2026-12-02")
+		// 2026-07-01..2026-08-02 is a 32-day difference.
+		status, _, code := get(t, app, "/dashboard/summary?from=2026-07-01&to=2026-08-02")
 		if status != 400 || code != "VALIDATION_ERROR" {
-			t.Fatalf("93-day range: want 400 VALIDATION_ERROR, got %d %s", status, code)
+			t.Fatalf("32-day range: want 400 VALIDATION_ERROR, got %d %s", status, code)
 		}
 		if repo.calls != 0 {
 			t.Fatalf("repo must not be called on an over-long range, got %d calls", repo.calls)
 		}
 	})
 
-	t.Run("92 days accepted", func(t *testing.T) {
+	t.Run("31 days accepted", func(t *testing.T) {
 		repo := &rangeRepo{}
 		svc := &application.Service{Repo: repo, Mitra: fakeMitra{}, LastLogin: fakeLastLogin{row: nil}}
 		app := newMeApp(t, svc, mitraPrincipal())
 
-		// 2026-09-01..2026-12-01 inclusive = 92 days.
-		status, data, _ := get(t, app, "/dashboard/summary?from=2026-09-01&to=2026-12-01")
+		// 2026-07-01..2026-08-01 is a 31-day difference.
+		status, data, _ := get(t, app, "/dashboard/summary?from=2026-07-01&to=2026-08-01")
 		if status != 200 {
-			t.Fatalf("92-day range must be accepted, got %d", status)
+			t.Fatalf("31-day range must be accepted, got %d", status)
 		}
-		if len(decodeMonthly(t, data).Days) != 92 {
-			t.Fatalf("want 92 day buckets, got %d", len(decodeMonthly(t, data).Days))
+		if len(decodeMonthly(t, data).Days) != 32 {
+			t.Fatalf("want 32 day buckets, got %d", len(decodeMonthly(t, data).Days))
 		}
 	})
 }
 
-// (g) Without any parameter the response is identical to the old behaviour:
-// the whole running month, every day filled, zeros for empty days.
-func TestDashboardNoParamsMatchesRunningMonthBehaviour(t *testing.T) {
+// (g) Without any parameter the default range is 1st of month to today.
+func TestDashboardNoParamsDefaultsToFirstToToday(t *testing.T) {
 	repo := &rangeRepo{counts: map[string]int64{"2026-11-01": 2, "2026-11-15": 3}}
 	svc := &application.Service{Repo: repo, Mitra: fakeMitra{}, LastLogin: fakeLastLogin{row: nil}}
 	app := newMeApp(t, svc, mitraPrincipal())
@@ -259,22 +288,115 @@ func TestDashboardNoParamsMatchesRunningMonthBehaviour(t *testing.T) {
 
 	now := time.Now().In(makassarForTest())
 	firstOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, makassarForTest())
-	daysInMonth := firstOfMonth.AddDate(0, 1, -1).Day()
-	if len(monthly.Days) != daysInMonth {
-		t.Fatalf("want %d day buckets for the running month, got %d", daysInMonth, len(monthly.Days))
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, makassarForTest())
+	daysInRange := int(today.Sub(firstOfMonth).Hours()/24) + 1
+	if len(monthly.Days) != daysInRange {
+		t.Fatalf("want %d day buckets for 1st..today, got %d", daysInRange, len(monthly.Days))
 	}
-	// The repo window is the whole running month.
+	// The repo window is 1st..today.
 	if repo.gotFrom.Month() != firstOfMonth.Month() || repo.gotFrom.Day() != 1 {
 		t.Fatalf("default repo from must be the 1st of the running month, got %s", repo.gotFrom.Format("2006-01-02"))
 	}
-	wantTo := firstOfMonth.AddDate(0, 1, 0)
+	wantTo := today.AddDate(0, 0, 1)
 	if !repo.gotTo.Equal(wantTo) {
-		t.Fatalf("default repo to must be the 1st of next month, got %s", repo.gotTo.Format("2006-01-02"))
+		t.Fatalf("default repo to must be tomorrow (exclusive), got %s", repo.gotTo.Format("2006-01-02"))
 	}
-	if monthly.Total != 5 {
-		t.Fatalf("want total 5, got %d", monthly.Total)
+	// Total only counts days in the range (1st..today).
+	// Test data has counts on 2026-11-01 (2) and 2026-11-15 (3).
+	// Since today is 2026-11-12, only 2026-11-01 is in range.
+	wantTotal := int64(2)
+	if monthly.Total != wantTotal {
+		t.Fatalf("want total %d (only 2026-11-01 in range), got %d", wantTotal, monthly.Total)
 	}
-	if monthly.Days[0].Count != 2 || monthly.Days[14].Count != 3 || monthly.Days[1].Count != 0 {
-		t.Fatalf("unexpected per-day counts: %+v", monthly.Days)
+}
+
+// (h) totalAmount is SUM(txamt) over the applied range: the custom range wins
+// over anything outside it. Coverage always spans the whole mitra dataset.
+func TestDashboardCustomRangeReturnsTotalAmountAndCoverage(t *testing.T) {
+	repo := &rangeRepo{
+		counts:     map[string]int64{"2026-11-02": 4, "2026-11-05": 6},
+		amount:     1525000,
+		gotMinDate: "2025-06-20",
+		gotMaxDate: "2026-08-12",
+		hasCover:   true,
+	}
+	svc := &application.Service{Repo: repo, Mitra: fakeMitra{}, LastLogin: fakeLastLogin{row: nil}}
+	app := newMeApp(t, svc, mitraPrincipal())
+
+	status, data, _ := get(t, app, "/dashboard/summary?from=2026-11-02&to=2026-11-05")
+	if status != 200 {
+		t.Fatalf("want 200, got %d", status)
+	}
+	monthly := decodeMonthly(t, data)
+
+	if monthly.TotalAmount != 1525000 {
+		t.Fatalf("want totalAmount 1525000, got %v", monthly.TotalAmount)
+	}
+	if monthly.Coverage == nil {
+		t.Fatalf("coverage must be present")
+	}
+	if monthly.Coverage.MinDate != "2025-06-20" || monthly.Coverage.LastDate != "2026-08-12" {
+		t.Fatalf("unexpected coverage: %+v", monthly.Coverage)
+	}
+	// Coverage is read once and its query carries no date bound (all data).
+	if repo.coverCalls != 1 {
+		t.Fatalf("coverage must be read exactly once, got %d", repo.coverCalls)
+	}
+}
+
+// (i) An empty range yields total 0 and totalAmount 0, with coverage still
+// reported from the whole dataset.
+func TestDashboardEmptyRangeYieldsZeroTotals(t *testing.T) {
+	repo := &rangeRepo{
+		counts:     nil,
+		amount:     0,
+		gotMinDate: "2025-06-20",
+		gotMaxDate: "2026-08-12",
+		hasCover:   true,
+	}
+	svc := &application.Service{Repo: repo, Mitra: fakeMitra{}, LastLogin: fakeLastLogin{row: nil}}
+	app := newMeApp(t, svc, mitraPrincipal())
+
+	status, data, _ := get(t, app, "/dashboard/summary?from=2026-11-02&to=2026-11-05")
+	if status != 200 {
+		t.Fatalf("want 200, got %d", status)
+	}
+	monthly := decodeMonthly(t, data)
+	if monthly.Total != 0 || monthly.TotalAmount != 0 {
+		t.Fatalf("want zero totals on an empty range, got total=%d amount=%v", monthly.Total, monthly.TotalAmount)
+	}
+	if monthly.Coverage == nil || monthly.Coverage.MinDate != "2025-06-20" {
+		t.Fatalf("coverage must still be reported on an empty range, got %+v", monthly.Coverage)
+	}
+}
+
+// (j) The mitra scope applies to SUM exactly as it does to COUNT: the amount
+// query is scoped to the principal's kode, never a client-supplied mitra.
+func TestDashboardTotalAmountScopesToPrincipalMitra(t *testing.T) {
+	repo := &rangeRepo{counts: nil, amount: 999, hasCover: false}
+	svc := &application.Service{Repo: repo, Mitra: fakeMitra{}, LastLogin: fakeLastLogin{row: nil}}
+	app := newMeApp(t, svc, mitraPrincipal())
+
+	status, _, _ := get(t, app, "/dashboard/summary?from=2026-11-02&to=2026-11-05&id_mitra=999")
+	if status != 200 {
+		t.Fatalf("want 200, got %d", status)
+	}
+	if repo.gotKode != "010" {
+		t.Fatalf("sum must scope to the principal mitra kode 010, got %q", repo.gotKode)
+	}
+}
+
+// (k) No stored rows: coverage is null (ok=false) rather than a zero date.
+func TestDashboardCoverageNullWhenMitraHasNoRows(t *testing.T) {
+	repo := &rangeRepo{counts: nil, amount: 0, hasCover: false}
+	svc := &application.Service{Repo: repo, Mitra: fakeMitra{}, LastLogin: fakeLastLogin{row: nil}}
+	app := newMeApp(t, svc, mitraPrincipal())
+
+	status, data, _ := get(t, app, "/dashboard/summary?from=2026-11-02&to=2026-11-05")
+	if status != 200 {
+		t.Fatalf("want 200, got %d", status)
+	}
+	if got := string(data["monthlyTransactions"]); !strings.Contains(got, `"coverage":null`) {
+		t.Fatalf("coverage must be null when the mitra has no rows, got %s", got)
 	}
 }

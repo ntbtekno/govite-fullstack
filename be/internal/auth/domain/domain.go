@@ -86,6 +86,9 @@ type Session struct {
 	RefreshToken string
 	User         User
 	BackupCodes  []string
+	// Remember is whether the client chose "Ingat saya"; the handler uses it to
+	// pick a persistent vs session cookie.
+	Remember bool
 }
 
 // Challenge is returned instead of a session when 2FA is required.
@@ -99,7 +102,13 @@ type Challenge struct {
 type RefreshToken struct {
 	ID, FamilyID, UserID string
 	ExpiresAt            time.Time
-	UsedAt, RevokedAt    *time.Time
+	// FamilyCreatedAt is the first login of this family; the absolute session
+	// cap is measured from it, not from the latest rotation.
+	FamilyCreatedAt time.Time
+	// Remember is whether the login chose "Ingat saya": it fixes the refresh
+	// token lifetime across rotations.
+	Remember          bool
+	UsedAt, RevokedAt *time.Time
 }
 
 type Family struct {
@@ -154,7 +163,7 @@ type Repository interface {
 	UseBackupCode(ctx context.Context, userID, hash string) (bool, error)
 	CountBackupCodes(ctx context.Context, userID string) (int64, error)
 
-	CreateFamily(ctx context.Context, id, userID string, userAgent, ip *string) error
+	CreateFamily(ctx context.Context, id, userID string, userAgent, ip *string, remember bool) error
 	AddRefreshToken(ctx context.Context, familyID, hash string, expires time.Time) error
 	FindRefreshToken(ctx context.Context, hash string) (RefreshToken, error)
 	// MarkRefreshTokenUsed is compare-and-set: false when already used.

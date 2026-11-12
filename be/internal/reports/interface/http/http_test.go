@@ -48,6 +48,14 @@ func (f *fakeRepo) MonthlyTransactionCounts(context.Context, domain.Filter, time
 	return nil, nil
 }
 
+func (f *fakeRepo) MonthlyTransactionTotal(context.Context, domain.Filter, time.Time, time.Time) (float64, error) {
+	return 0, nil
+}
+
+func (f *fakeRepo) MonthlyTransactionCoverage(context.Context, domain.Filter) (string, string, bool, error) {
+	return "", "", false, nil
+}
+
 func newApp(t *testing.T, grants []rbacdomain.Grant, svc *application.Service, p kernel.Principal) *fiber.App {
 	t.Helper()
 	app := fiber.New(fiber.Config{Immutable: true, ErrorHandler: httpx.ErrorHandler})
@@ -279,12 +287,27 @@ type countableRepo struct {
 	counts   map[string]int64
 	gotKode  string
 	dayCalls int
+
+	amount     float64
+	gotMinDate string
+	gotMaxDate string
+	hasCover   bool
 }
 
 func (r *countableRepo) MonthlyTransactionCounts(_ context.Context, f domain.Filter, _, _ time.Time) (map[string]int64, error) {
 	r.gotKode = f.MitraKode
 	r.dayCalls++
 	return r.counts, nil
+}
+
+func (r *countableRepo) MonthlyTransactionTotal(_ context.Context, f domain.Filter, _, _ time.Time) (float64, error) {
+	r.gotKode = f.MitraKode
+	return r.amount, nil
+}
+
+func (r *countableRepo) MonthlyTransactionCoverage(_ context.Context, f domain.Filter) (string, string, bool, error) {
+	r.gotKode = f.MitraKode
+	return r.gotMinDate, r.gotMaxDate, r.hasCover, nil
 }
 
 func TestDashboardLastLoginOnlyForNonMitra(t *testing.T) {
@@ -337,14 +360,23 @@ func TestDashboardMonthlyScopesToPrincipalMitraAndFillsEveryDay(t *testing.T) {
 	if err := json.Unmarshal(data["monthlyTransactions"], &monthly); err != nil {
 		t.Fatalf("decode monthly: %v", err)
 	}
-	// November has 30 days; every day must appear, empty days as zero.
-	if len(monthly.Days) != 30 {
-		t.Fatalf("want 30 day buckets, got %d", len(monthly.Days))
+	// Default range is 1st of month to today (in test timezone).
+	now := time.Now().In(makassarForTest())
+	firstOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, makassarForTest())
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, makassarForTest())
+	daysInRange := int(today.Sub(firstOfMonth).Hours()/24) + 1
+	if len(monthly.Days) != daysInRange {
+		t.Fatalf("want %d day buckets for 1st..today, got %d", daysInRange, len(monthly.Days))
 	}
-	if monthly.Total != 5 {
-		t.Fatalf("want total 5, got %d", monthly.Total)
+	// Test data has counts on 2026-11-01 (2) and 2026-11-15 (3).
+	// Since today is 2026-11-12, only 2026-11-01 is in range.
+	wantTotal := int64(2)
+	if monthly.Total != wantTotal {
+		t.Fatalf("want total %d (only 2026-11-01 in range), got %d", wantTotal, monthly.Total)
 	}
-	if monthly.Days[0].Count != 2 || monthly.Days[14].Count != 3 || monthly.Days[1].Count != 0 {
+	// The range is 1st..today (12 days in Nov 2026), so day 15 (index 14) is not in range.
+	// Only check day 1 (index 0) which should be 2.
+	if monthly.Days[0].Count != 2 || monthly.Days[1].Count != 0 {
 		t.Fatalf("unexpected per-day counts: %+v", monthly.Days)
 	}
 	// lastLogin null when the reader reports no row.
@@ -371,12 +403,20 @@ func TestDashboardEmptyDSNKeepsLastLoginAndMarksMonthlyUnavailable(t *testing.T)
 		t.Fatalf("lastLogin must survive an unconfigured reports DB, got %s", data["lastLogin"])
 	}
 	var monthly struct {
-		Unavailable bool `json:"unavailable"`
+		Unavailable bool            `json:"unavailable"`
+		Coverage    json.RawMessage `json:"coverage"`
+		TotalAmount float64         `json:"totalAmount"`
 	}
 	if err := json.Unmarshal(data["monthlyTransactions"], &monthly); err != nil {
 		t.Fatalf("decode monthly: %v", err)
 	}
 	if !monthly.Unavailable {
 		t.Fatalf("monthly must be unavailable when the DSN is empty")
+	}
+	if string(monthly.Coverage) != "null" {
+		t.Fatalf("coverage must be null when the DSN is empty, got %s", monthly.Coverage)
+	}
+	if monthly.TotalAmount != 0 {
+		t.Fatalf("totalAmount must be 0 when the DSN is empty, got %v", monthly.TotalAmount)
 	}
 }

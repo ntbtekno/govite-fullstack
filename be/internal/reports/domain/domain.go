@@ -77,12 +77,24 @@ type DailyPoint struct {
 	Count int64  `json:"count"`
 }
 
+// Coverage is the range of the mitra's stored transaction dates (MIN/MAX of
+// txdtstlmn). It spans ALL of the mitra's data, not just the applied range, so
+// the dashboard can tell the user how far back the stored data goes.
+type Coverage struct {
+	MinDate  string `json:"minDate"`
+	LastDate string `json:"lastDate"`
+}
+
 // MonthlyTransactions is the caller mitra's transaction summary for the
-// running calendar month (Asia/Makassar). Unavailable is true when the reports
-// database is not configured; the other fields are then zero.
+// applied range (running calendar month by default). Unavailable is true when
+// the reports database is not configured; the other fields are then zero.
+// TotalAmount is SUM(txamt) over the applied range; Coverage is nil when the
+// mitra has no stored rows.
 type MonthlyTransactions struct {
 	Unavailable bool         `json:"unavailable"`
 	Total       int64        `json:"total"`
+	TotalAmount float64      `json:"totalAmount"`
+	Coverage    *Coverage    `json:"coverage"`
 	Days        []DailyPoint `json:"days"`
 }
 
@@ -94,6 +106,13 @@ type Repository interface {
 	// MonthlyTransactionCounts returns the per-day counts (YYYY-MM-DD, already
 	// in Asia/Makassar) for the caller mitra's VA prefix and the given month.
 	MonthlyTransactionCounts(ctx context.Context, f Filter, from, to time.Time) (map[string]int64, error)
+	// MonthlyTransactionTotal returns SUM(txamt) for the mitra's VA prefix over
+	// the [from, to) window.
+	MonthlyTransactionTotal(ctx context.Context, f Filter, from, to time.Time) (float64, error)
+	// MonthlyTransactionCoverage returns the MIN and MAX settlement dates for
+	// the mitra's VA prefix over ALL of its stored data. ok is false when the
+	// mitra has no rows.
+	MonthlyTransactionCoverage(ctx context.Context, f Filter) (min, max string, ok bool, err error)
 }
 
 // LastLoginReader reads the caller's last successful login from the primary

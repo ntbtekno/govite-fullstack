@@ -6,6 +6,7 @@ export const LoginRequestSchema = z.object({
   password,
   captchaId: z.string().min(1),
   captcha: z.string().min(1).max(16),
+  rememberMe: z.boolean().optional(),
 })
 export type LoginRequest = z.infer<typeof LoginRequestSchema>
 
@@ -15,6 +16,7 @@ export const LoginMitraRequestSchema = z.object({
   password,
   captchaId: z.string().min(1),
   captcha: z.string().min(1).max(16),
+  rememberMe: z.boolean().optional(),
 })
 export type LoginMitraRequest = z.infer<typeof LoginMitraRequestSchema>
 
@@ -57,6 +59,7 @@ export type LoginResponse = z.infer<typeof LoginResponseSchema>
 export const TwoFactorVerifyRequestSchema = z.object({
   challengeToken: z.string().min(32).max(256),
   code: z.string().regex(/^\d{6}$/),
+  rememberMe: z.boolean().optional(),
 })
 export type TwoFactorVerifyRequest = z.infer<
   typeof TwoFactorVerifyRequestSchema
@@ -65,6 +68,7 @@ export type TwoFactorVerifyRequest = z.infer<
 export const TwoFactorBackupRequestSchema = z.object({
   challengeToken: z.string().min(32).max(256),
   backupCode: z.string().trim().min(1).max(32),
+  rememberMe: z.boolean().optional(),
 })
 export type TwoFactorBackupRequest = z.infer<
   typeof TwoFactorBackupRequestSchema

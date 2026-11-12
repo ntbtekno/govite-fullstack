@@ -110,6 +110,13 @@ var Security = struct {
 	TwoFactorChallengeTTL time.Duration
 	MaxCodeAttempts       int
 	CaptchaTTL            time.Duration
+	// Session idle/absolute limits (enforced in the browser; the server also
+	// caps refresh lifetime). IdleWindow is used when "remember me" is off,
+	// RememberIdleWindow when it is on. AbsoluteTTL caps every session, no
+	// matter how active.
+	IdleWindow         time.Duration
+	RememberIdleWindow time.Duration
+	AbsoluteTTL        time.Duration
 }{
 	PasswordMinLength:     8,
 	PasswordMaxLength:     128,
@@ -122,17 +129,28 @@ var Security = struct {
 	TwoFactorChallengeTTL: 5 * time.Minute,
 	MaxCodeAttempts:       5,
 	CaptchaTTL:            2 * time.Minute,
+	IdleWindow:            15 * time.Minute,
+	RememberIdleWindow:    60 * time.Minute,
+	AbsoluteTTL:           8 * time.Hour,
 }
 
 // InitSecurity initializes the Security limits with custom token TTLs.
-// Call this once at application startup. If accessTTL or refreshTTL is <= 0,
-// the defaults (15m / 7d) are kept.
-func InitSecurity(accessTTL, refreshTTL time.Duration) {
+// Call this once at application startup. A value <= 0 keeps the default.
+func InitSecurity(accessTTL, refreshTTL, idleWindow, rememberIdleWindow, absoluteTTL time.Duration) {
 	if accessTTL > 0 {
 		Security.AccessTokenTTL = accessTTL
 	}
 	if refreshTTL > 0 {
 		Security.RefreshTokenTTL = refreshTTL
+	}
+	if idleWindow > 0 {
+		Security.IdleWindow = idleWindow
+	}
+	if rememberIdleWindow > 0 {
+		Security.RememberIdleWindow = rememberIdleWindow
+	}
+	if absoluteTTL > 0 {
+		Security.AbsoluteTTL = absoluteTTL
 	}
 }
 

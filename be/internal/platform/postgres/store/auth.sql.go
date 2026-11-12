@@ -67,7 +67,7 @@ func (q *Queries) CountBackupCodes(ctx context.Context, userID string) (int64, e
 }
 
 const createFamily = `-- name: CreateFamily :exec
-INSERT INTO refresh_token_family (id, user_id, user_agent, ip_address) VALUES ($1, $2, $3, $4)
+INSERT INTO refresh_token_family (id, user_id, user_agent, ip_address, remember) VALUES ($1, $2, $3, $4, $5)
 `
 
 type CreateFamilyParams struct {
@@ -75,6 +75,7 @@ type CreateFamilyParams struct {
 	UserID    string
 	UserAgent *string
 	IpAddress *string
+	Remember  bool
 }
 
 func (q *Queries) CreateFamily(ctx context.Context, arg CreateFamilyParams) error {
@@ -83,6 +84,7 @@ func (q *Queries) CreateFamily(ctx context.Context, arg CreateFamilyParams) erro
 		arg.UserID,
 		arg.UserAgent,
 		arg.IpAddress,
+		arg.Remember,
 	)
 	return err
 }
@@ -142,18 +144,20 @@ func (q *Queries) EnableTwoFactor(ctx context.Context, userID string) error {
 }
 
 const findRefreshToken = `-- name: FindRefreshToken :one
-SELECT t.id, t.family_id, t.expires_at, t.used_at, f.user_id, f.revoked_at
+SELECT t.id, t.family_id, t.expires_at, t.used_at, f.user_id, f.revoked_at, f.created_at AS family_created_at, f.remember AS family_remember
 FROM refresh_token t JOIN refresh_token_family f ON f.id = t.family_id
 WHERE t.token_hash = $1
 `
 
 type FindRefreshTokenRow struct {
-	ID        string
-	FamilyID  string
-	ExpiresAt time.Time
-	UsedAt    *time.Time
-	UserID    string
-	RevokedAt *time.Time
+	ID              string
+	FamilyID        string
+	ExpiresAt       time.Time
+	UsedAt          *time.Time
+	UserID          string
+	RevokedAt       *time.Time
+	FamilyCreatedAt time.Time
+	FamilyRemember  bool
 }
 
 func (q *Queries) FindRefreshToken(ctx context.Context, tokenHash string) (FindRefreshTokenRow, error) {
@@ -166,6 +170,8 @@ func (q *Queries) FindRefreshToken(ctx context.Context, tokenHash string) (FindR
 		&i.UsedAt,
 		&i.UserID,
 		&i.RevokedAt,
+		&i.FamilyCreatedAt,
+		&i.FamilyRemember,
 	)
 	return i, err
 }
@@ -198,7 +204,7 @@ func (q *Queries) FindUserToken(ctx context.Context, arg FindUserTokenParams) (U
 }
 
 const getFamily = `-- name: GetFamily :one
-SELECT id, user_id, user_agent, ip_address, revoked_at, created_at FROM refresh_token_family WHERE id = $1
+SELECT id, user_id, user_agent, ip_address, revoked_at, created_at, remember FROM refresh_token_family WHERE id = $1
 `
 
 func (q *Queries) GetFamily(ctx context.Context, id string) (RefreshTokenFamily, error) {
@@ -211,6 +217,7 @@ func (q *Queries) GetFamily(ctx context.Context, id string) (RefreshTokenFamily,
 		&i.IpAddress,
 		&i.RevokedAt,
 		&i.CreatedAt,
+		&i.Remember,
 	)
 	return i, err
 }

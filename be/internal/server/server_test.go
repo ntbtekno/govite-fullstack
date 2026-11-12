@@ -315,6 +315,24 @@ func (e *env) login(email string) (token string, refresh *http.Cookie) {
 	return r.data()["accessToken"].(string), refresh
 }
 
+// loginRemember logs in with an explicit "Ingat saya" choice.
+func (e *env) loginRemember(email string, remember bool) (token string, refresh *http.Cookie) {
+	e.t.Helper()
+	id, answer := e.solveCaptcha()
+	r := e.do("POST", "/auth/login", map[string]any{
+		"login": email, "password": password, "captchaId": id, "captcha": answer, "rememberMe": remember,
+	})
+	if r.Code != 201 {
+		e.t.Fatalf("login %s: %d %s", email, r.Code, r.Raw)
+	}
+	for _, c := range r.Cookies {
+		if c.Name == "refresh_token" {
+			refresh = c
+		}
+	}
+	return r.data()["accessToken"].(string), refresh
+}
+
 // loginMitra logs in a mitra user with a solved captcha.
 func (e *env) loginMitra(kode, username string) (token string, refresh *http.Cookie) {
 	e.t.Helper()
@@ -740,6 +758,107 @@ func TestRefreshRotationAndReuse(t *testing.T) {
 	expect(t, m, 201)
 	if m.data()["refreshToken"] == nil || len(m.Cookies) != 0 {
 		t.Fatal("mobile login should return body token, no cookie")
+	}
+}
+
+// TestLoginRememberMeCookie proves the remember-me choice controls refresh
+// cookie persistence: a remembered login sets a ~7-day max-age, the default is
+// a session cookie (max-age 0) the browser drops on close.
+func TestLoginRememberMeCookie(t *testing.T) {
+	e := setup(t)
+	e.seedUser("remember@test.local")
+
+	// With rememberMe: a persistent cookie (max-age about 7 days).
+	id, answer := e.solveCaptcha()
+	r := e.do("POST", "/auth/login", map[string]any{
+		"login": "remember@test.local", "password": password,
+		"captchaId": id, "captcha": answer, "rememberMe": true,
+	})
+	expect(t, r, 201)
+	var remembered *http.Cookie
+	for _, c := range r.Cookies {
+		if c.Name == "refresh_token" {
+			remembered = c
+		}
+	}
+	if remembered == nil {
+		t.Fatal("no refresh cookie")
+	}
+	if remembered.MaxAge < int((6 * 24 * time.Hour).Seconds()) {
+		t.Fatalf("remember-me cookie should be persistent, got maxage=%d", remembered.MaxAge)
+	}
+
+	// Without rememberMe: a session cookie (max-age 0).
+	id, answer = e.solveCaptcha()
+	r = e.do("POST", "/auth/login", map[string]any{
+		"login": "remember@test.local", "password": password,
+		"captchaId": id, "captcha": answer, "rememberMe": false,
+	})
+	expect(t, r, 201)
+	var session *http.Cookie
+	for _, c := range r.Cookies {
+		if c.Name == "refresh_token" {
+			session = c
+		}
+	}
+	if session == nil {
+		t.Fatal("no refresh cookie")
+	}
+	if session.MaxAge != 0 {
+		t.Fatalf("default cookie should be a session cookie, got maxage=%d", session.MaxAge)
+	}
+}
+
+// TestRefreshAbsoluteCap proves the 8-hour absolute session cap: once the
+// family was created more than the cap ago, refresh fails (401) and the family
+// is revoked, forcing a fresh login even for an active session.
+func TestRefreshAbsoluteCap(t *testing.T) {
+	e := setup(t)
+	e.seedUser("cap@test.local")
+	_, refresh := e.login("cap@test.local")
+	if refresh == nil {
+		t.Fatal("no refresh cookie")
+	}
+
+	// Backdate the family's creation past the absolute cap.
+	_, err := e.pool.Exec(context.Background(),
+		`UPDATE refresh_token_family SET created_at = now() - interval '9 hours'
+		 WHERE id = (SELECT id FROM refresh_token_family ORDER BY created_at DESC LIMIT 1)`)
+	must(t, err)
+
+	expect(t, e.do("POST", "/auth/refresh", nil, cookie(refresh)), 401, "INVALID_REFRESH_TOKEN")
+
+	// The family is revoked, so a fresh login is required.
+	var revoked *time.Time
+	err = e.pool.QueryRow(context.Background(),
+		`SELECT revoked_at FROM refresh_token_family ORDER BY created_at DESC LIMIT 1`).Scan(&revoked)
+	must(t, err)
+	if revoked == nil {
+		t.Fatal("family should be revoked after the absolute cap")
+	}
+}
+
+// TestRefreshNonRememberExpiry proves a non-remember refresh token only lives
+// one idle window, while a remembered one spans the full RefreshTokenTTL.
+func TestRefreshNonRememberExpiry(t *testing.T) {
+	e := setup(t)
+	e.seedUser("short@test.local")
+
+	idle := policy.Security.IdleWindow
+	_, _ = e.loginRemember("short@test.local", false)
+	var nonRemember time.Time
+	must(t, e.pool.QueryRow(context.Background(),
+		`SELECT expires_at FROM refresh_token ORDER BY created_at DESC LIMIT 1`).Scan(&nonRemember))
+	if d := time.Until(nonRemember); d > idle+time.Minute {
+		t.Fatalf("non-remember token should expire within one idle window (%v), got %v", idle, d)
+	}
+
+	_, _ = e.loginRemember("short@test.local", true)
+	var remember time.Time
+	must(t, e.pool.QueryRow(context.Background(),
+		`SELECT expires_at FROM refresh_token ORDER BY created_at DESC LIMIT 1`).Scan(&remember))
+	if d := time.Until(remember); d < 6*24*time.Hour {
+		t.Fatalf("remember token should span the refresh TTL, got %v", d)
 	}
 }
 

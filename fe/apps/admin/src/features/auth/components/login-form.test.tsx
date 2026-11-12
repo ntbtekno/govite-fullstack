@@ -72,9 +72,34 @@ describe("LoginForm", () => {
       "a@test.local",
       "Password123!",
       expect.stringMatching(/^cap-\d+$/),
-      "AB123"
+      "AB123",
+      false
     )
     expect(push).toHaveBeenCalledWith("/admin/users")
+  })
+
+  it("passes rememberMe=true when Ingat saya is checked", async () => {
+    getCaptcha.mockImplementation(async () => nextCaptcha())
+    login.mockResolvedValue({ requiresTwoFactor: false })
+    await render(<LoginForm redirectTo="/admin/users" />)
+    ;(document.querySelector("#login") as HTMLInputElement).value =
+      "a@test.local"
+    ;(document.querySelector("#password") as HTMLInputElement).value =
+      "Password123!"
+    ;(document.querySelector("#captcha") as HTMLInputElement).value = "AB123"
+    const checkbox = document.querySelector(
+      "#rememberMe"
+    ) as HTMLButtonElement
+    expect(checkbox).not.toBeNull()
+    await click(checkbox)
+    await submit(document.querySelector("form")!)
+    expect(login).toHaveBeenCalledWith(
+      "a@test.local",
+      "Password123!",
+      expect.stringMatching(/^cap-\d+$/),
+      "AB123",
+      true
+    )
   })
 
   it("reloads the captcha after a failed login", async () => {
@@ -92,7 +117,8 @@ describe("LoginForm", () => {
       "a@test.local",
       "Password123!",
       expect.any(String),
-      "WRONG"
+      "WRONG",
+      false
     )
     const nextSubmit = document.querySelector("form")!
     ;(document.querySelector("#password") as HTMLInputElement).value =
@@ -123,7 +149,8 @@ describe("LoginForm", () => {
       "admin",
       "Password123!",
       expect.stringMatching(/^cap-\d+$/),
-      "AB123"
+      "AB123",
+      false
     )
     expect(push).toHaveBeenCalledWith("/admin/dashboard")
   })
@@ -154,7 +181,7 @@ describe("LoginForm", () => {
     expect(new RegExp(`^(?:${code.pattern})$`).test("123456")).toBe(true)
     code.value = "123456"
     await submit(document.querySelector("form")!)
-    expect(verifyTwoFactor).toHaveBeenCalledWith("challenge", "123456")
+    expect(verifyTwoFactor).toHaveBeenCalledWith("challenge", "123456", false)
     // Backup codes are shown once before the redirect happens.
     expect(push).not.toHaveBeenCalled()
     expect(document.body.textContent).toContain("11111-11111")
@@ -187,7 +214,8 @@ describe("LoginForm", () => {
     await submit(document.querySelector("form")!)
     expect(verifyTwoFactorBackup).toHaveBeenCalledWith(
       "challenge",
-      "11111-11111"
+      "11111-11111",
+      false
     )
     expect(push).toHaveBeenCalledWith("/admin/users")
   })

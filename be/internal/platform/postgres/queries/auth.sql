@@ -17,13 +17,13 @@ UPDATE "user" SET full_name = $2, password_hash = $3, email_verified_at = now() 
 UPDATE "user" SET email_verified_at = now() WHERE id = $1;
 
 -- name: CreateFamily :exec
-INSERT INTO refresh_token_family (id, user_id, user_agent, ip_address) VALUES ($1, $2, $3, $4);
+INSERT INTO refresh_token_family (id, user_id, user_agent, ip_address, remember) VALUES ($1, $2, $3, $4, $5);
 
 -- name: AddRefreshToken :exec
 INSERT INTO refresh_token (id, family_id, token_hash, expires_at) VALUES ($1, $2, $3, $4);
 
 -- name: FindRefreshToken :one
-SELECT t.id, t.family_id, t.expires_at, t.used_at, f.user_id, f.revoked_at
+SELECT t.id, t.family_id, t.expires_at, t.used_at, f.user_id, f.revoked_at, f.created_at AS family_created_at, f.remember AS family_remember
 FROM refresh_token t JOIN refresh_token_family f ON f.id = t.family_id
 WHERE t.token_hash = $1;
 

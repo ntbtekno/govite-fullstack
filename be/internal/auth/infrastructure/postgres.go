@@ -116,8 +116,8 @@ func (r Repository) CountBackupCodes(ctx context.Context, userID string) (int64,
 	return r.DB.Q(ctx).CountBackupCodes(ctx, userID)
 }
 
-func (r Repository) CreateFamily(ctx context.Context, id, userID string, userAgent, ip *string) error {
-	return r.DB.Q(ctx).CreateFamily(ctx, store.CreateFamilyParams{ID: id, UserID: userID, UserAgent: userAgent, IpAddress: ip})
+func (r Repository) CreateFamily(ctx context.Context, id, userID string, userAgent, ip *string, remember bool) error {
+	return r.DB.Q(ctx).CreateFamily(ctx, store.CreateFamilyParams{ID: id, UserID: userID, UserAgent: userAgent, IpAddress: ip, Remember: remember})
 }
 
 func (r Repository) AddRefreshToken(ctx context.Context, familyID, hash string, expires time.Time) error {
@@ -126,7 +126,7 @@ func (r Repository) AddRefreshToken(ctx context.Context, familyID, hash string, 
 
 func (r Repository) FindRefreshToken(ctx context.Context, hash string) (domain.RefreshToken, error) {
 	t, err := r.DB.Q(ctx).FindRefreshToken(ctx, hash)
-	return domain.RefreshToken{ID: t.ID, FamilyID: t.FamilyID, UserID: t.UserID, ExpiresAt: t.ExpiresAt, UsedAt: t.UsedAt, RevokedAt: t.RevokedAt}, postgres.Err(err)
+	return domain.RefreshToken{ID: t.ID, FamilyID: t.FamilyID, UserID: t.UserID, ExpiresAt: t.ExpiresAt, FamilyCreatedAt: t.FamilyCreatedAt, Remember: t.FamilyRemember, UsedAt: t.UsedAt, RevokedAt: t.RevokedAt}, postgres.Err(err)
 }
 
 func (r Repository) MarkRefreshTokenUsed(ctx context.Context, id, replacedBy string) (bool, error) {

@@ -115,6 +115,7 @@ type RefreshTokenFamily struct {
 	IpAddress *string
 	RevokedAt *time.Time
 	CreatedAt time.Time
+	Remember  bool
 }
 
 type Role struct {

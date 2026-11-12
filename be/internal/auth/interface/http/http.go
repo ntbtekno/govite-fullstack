@@ -64,11 +64,18 @@ func (h Handler) Authenticate(c *fiber.Ctx) error {
 // Native apps send `X-Client: mobile`: refresh token travels in the JSON body.
 func isMobile(c *fiber.Ctx) bool { return strings.EqualFold(c.Get("X-Client"), "mobile") }
 
-func setRefreshCookie(c *fiber.Ctx, token string) {
-	c.Cookie(&fiber.Cookie{
+// setRefreshCookie writes the refresh cookie. With remember the cookie (and
+// the token) live for RefreshTokenTTL; otherwise it is a session cookie that
+// the browser drops on close, and the server token only spans one idle window.
+func setRefreshCookie(c *fiber.Ctx, token string, remember bool) {
+	cookie := &fiber.Cookie{
 		Name: refreshCookie, Value: token, Path: cookiePath, HTTPOnly: true, Secure: true, SameSite: "Strict",
-		MaxAge: int(policy.Security.RefreshTokenTTL.Seconds()), Expires: time.Now().Add(policy.Security.RefreshTokenTTL),
-	})
+	}
+	if remember {
+		cookie.MaxAge = int(policy.Security.RefreshTokenTTL.Seconds())
+		cookie.Expires = time.Now().Add(policy.Security.RefreshTokenTTL)
+	}
+	c.Cookie(cookie)
 }
 
 func clearRefreshCookie(c *fiber.Ctx) {
@@ -143,34 +150,38 @@ func deliver(c *fiber.Ctx, sess *domain.Session, ch *domain.Challenge) error {
 	if isMobile(c) {
 		res.RefreshToken = sess.RefreshToken
 	} else {
-		setRefreshCookie(c, sess.RefreshToken)
+		setRefreshCookie(c, sess.RefreshToken, sess.Remember)
 	}
 	return httpx.Created(c, res)
 }
 
 type loginReq struct {
-	Login     string `json:"login" validate:"required,min=1"`
-	Password  string `json:"password" validate:"required,password"`
-	CaptchaID string `json:"captchaId" validate:"required,min=1,max=128"`
-	Captcha   string `json:"captcha" validate:"required,min=1,max=16"`
+	Login      string `json:"login" validate:"required,min=1"`
+	Password   string `json:"password" validate:"required,password"`
+	CaptchaID  string `json:"captchaId" validate:"required,min=1,max=128"`
+	Captcha    string `json:"captcha" validate:"required,min=1,max=16"`
+	RememberMe bool   `json:"rememberMe"`
 }
 
 type loginMitraReq struct {
-	MitraKode string `json:"mitraKode" validate:"required,min=1"`
-	Username  string `json:"username" validate:"required,min=1"`
-	Password  string `json:"password" validate:"required,password"`
-	CaptchaID string `json:"captchaId" validate:"required,min=1,max=128"`
-	Captcha   string `json:"captcha" validate:"required,min=1,max=16"`
+	MitraKode  string `json:"mitraKode" validate:"required,min=1"`
+	Username   string `json:"username" validate:"required,min=1"`
+	Password   string `json:"password" validate:"required,password"`
+	CaptchaID  string `json:"captchaId" validate:"required,min=1,max=128"`
+	Captcha    string `json:"captcha" validate:"required,min=1,max=16"`
+	RememberMe bool   `json:"rememberMe"`
 }
 
 type verifyReq struct {
 	ChallengeToken string `json:"challengeToken" validate:"required,min=32,max=256"`
 	Code           string `json:"code" validate:"required,numeric,len=6"`
+	RememberMe     bool   `json:"rememberMe"`
 }
 
 type backupReq struct {
 	ChallengeToken string `json:"challengeToken" validate:"required,min=32,max=256"`
 	BackupCode     string `json:"backupCode" validate:"required,min=1,max=32"`
+	RememberMe     bool   `json:"rememberMe"`
 }
 
 type forgotReq struct {
@@ -234,7 +245,7 @@ func (h Handler) Routes(r fiber.Router, loginLimit, refreshLimit, captchaLimit f
 	})
 
 	r.Post("/login", loginLimit, body(func(c *fiber.Ctx, b loginReq) error {
-		sess, ch, err := h.Svc.Login(c.UserContext(), b.Login, b.Password, b.CaptchaID, b.Captcha, client(c))
+		sess, ch, err := h.Svc.Login(c.UserContext(), b.Login, b.Password, b.CaptchaID, b.Captcha, client(c), b.RememberMe)
 		h.logAttempt(c, outcome(LoginAttempt{Endpoint: "/auth/login", Login: b.Login}, err, fiber.StatusCreated))
 		if err != nil {
 			return err
@@ -243,7 +254,7 @@ func (h Handler) Routes(r fiber.Router, loginLimit, refreshLimit, captchaLimit f
 	}))
 
 	r.Post("/login-mitra", loginLimit, body(func(c *fiber.Ctx, b loginMitraReq) error {
-		sess, ch, err := h.Svc.LoginMitra(c.UserContext(), b.MitraKode, b.Username, b.Password, b.CaptchaID, b.Captcha, client(c))
+		sess, ch, err := h.Svc.LoginMitra(c.UserContext(), b.MitraKode, b.Username, b.Password, b.CaptchaID, b.Captcha, client(c), b.RememberMe)
 		h.logAttempt(c, outcome(LoginAttempt{Endpoint: "/auth/login-mitra", MitraKode: b.MitraKode, Login: b.Username}, err, fiber.StatusCreated))
 		if err != nil {
 			return err
@@ -252,7 +263,7 @@ func (h Handler) Routes(r fiber.Router, loginLimit, refreshLimit, captchaLimit f
 	}))
 
 	r.Post("/2fa/verify", loginLimit, body(func(c *fiber.Ctx, b verifyReq) error {
-		sess, err := h.Svc.VerifyTwoFactor(c.UserContext(), b.ChallengeToken, b.Code, client(c))
+		sess, err := h.Svc.VerifyTwoFactor(c.UserContext(), b.ChallengeToken, b.Code, client(c), b.RememberMe)
 		if err != nil {
 			return err
 		}
@@ -260,7 +271,7 @@ func (h Handler) Routes(r fiber.Router, loginLimit, refreshLimit, captchaLimit f
 	}))
 
 	r.Post("/2fa/verify-backup", loginLimit, body(func(c *fiber.Ctx, b backupReq) error {
-		sess, err := h.Svc.VerifyBackupCode(c.UserContext(), b.ChallengeToken, b.BackupCode, client(c))
+		sess, err := h.Svc.VerifyBackupCode(c.UserContext(), b.ChallengeToken, b.BackupCode, client(c), b.RememberMe)
 		if err != nil {
 			return err
 		}
@@ -284,7 +295,7 @@ func (h Handler) Routes(r fiber.Router, loginLimit, refreshLimit, captchaLimit f
 		if isMobile(c) {
 			res["refreshToken"] = sess.RefreshToken
 		} else {
-			setRefreshCookie(c, sess.RefreshToken)
+			setRefreshCookie(c, sess.RefreshToken, sess.Remember)
 		}
 		return httpx.OK(c, res)
 	})

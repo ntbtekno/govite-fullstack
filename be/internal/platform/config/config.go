@@ -21,19 +21,23 @@ type Config struct {
 	RedisURL    string
 	// ReportsMySQLDSN points at the external read-only reporting database.
 	// Empty disables the /reports endpoints (503).
-	ReportsMySQLDSN      string
-	JWTSecret            string
-	RefreshPepper        string
-	AccessTokenTTL       time.Duration
-	RefreshTokenTTL      time.Duration
-	SMTPHost             string
-	SMTPPort             int
-	SMTPUsername         string
-	SMTPPassword         string
-	SMTPFrom             string
-	ThrottleLimit        int
-	LoginThrottleLimit   int
-	CaptchaThrottleLimit int
+	ReportsMySQLDSN string
+	JWTSecret       string
+	RefreshPepper   string
+	AccessTokenTTL  time.Duration
+	RefreshTokenTTL time.Duration
+	// Session idle/absolute limits (see policy.Security).
+	SessionIdleTTL         time.Duration
+	SessionRememberIdleTTL time.Duration
+	SessionAbsoluteTTL     time.Duration
+	SMTPHost               string
+	SMTPPort               int
+	SMTPUsername           string
+	SMTPPassword           string
+	SMTPFrom               string
+	ThrottleLimit          int
+	LoginThrottleLimit     int
+	CaptchaThrottleLimit   int
 	// E2ECaptchaCode, when set outside production, pins the captcha code so a
 	// headless browser test can log in. Ignored in production.
 	E2ECaptchaCode string
@@ -138,6 +142,9 @@ func Load() (Config, error) {
 		RefreshPepper:              required("REFRESH_TOKEN_PEPPER"),
 		AccessTokenTTL:             duration("ACCESS_TOKEN_TTL", 15*time.Minute),
 		RefreshTokenTTL:            duration("REFRESH_TOKEN_TTL", 7*24*time.Hour),
+		SessionIdleTTL:             duration("SESSION_IDLE_TTL", 15*time.Minute),
+		SessionRememberIdleTTL:     duration("SESSION_REMEMBER_IDLE_TTL", 60*time.Minute),
+		SessionAbsoluteTTL:         duration("SESSION_ABSOLUTE_TTL", 8*time.Hour),
 		SMTPHost:                   str("SMTP_HOST", ""),
 		SMTPPort:                   num("SMTP_PORT", 1025),
 		SMTPUsername:               str("SMTP_USERNAME", ""),

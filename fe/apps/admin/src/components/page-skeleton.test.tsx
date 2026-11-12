@@ -58,7 +58,7 @@ describe("Skeleton components", () => {
     await unmount()
   })
 
-  it("renders DashboardSkeleton with data-variant='dashboard-skeleton' and 4 cards", async () => {
+  it("renders DashboardSkeleton with data-variant='dashboard-skeleton' and 3 cards", async () => {
     const { host, unmount } = await render(<DashboardSkeleton />)
     const el = host.querySelector(
       '[data-testid="page-skeleton"][data-variant="dashboard-skeleton"]'
@@ -66,7 +66,7 @@ describe("Skeleton components", () => {
     expect(el).not.toBeNull()
 
     const cards = host.querySelectorAll('[data-slot="card"]')
-    expect(cards.length).toBe(4)
+    expect(cards.length).toBe(3)
     await unmount()
   })
 

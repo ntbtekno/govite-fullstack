@@ -196,6 +196,41 @@ func (r Repository) MonthlyTransactionCounts(ctx context.Context, f domain.Filte
 	return out, rows.Err()
 }
 
+// MonthlyTransactionTotal returns SUM(txamt) for the mitra's VA prefix over the
+// [from, to) window, mirroring MonthlyTransactionCounts' scope and bounds.
+func (r Repository) MonthlyTransactionTotal(ctx context.Context, f domain.Filter, from, to time.Time) (float64, error) {
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+
+	f.From = &from
+	f.To = &to
+	query, args := BuildMonthlyAmount(f)
+	var total float64
+	if err := r.DB.QueryRowContext(ctx, query, args...).Scan(&total); err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+// MonthlyTransactionCoverage returns the MIN and MAX settlement dates over ALL
+// of the mitra's stored rows. ok is false when the mitra has no rows (both
+// scanned values are NULL). The kode is taken from f.MitraKode; no date bound
+// is applied.
+func (r Repository) MonthlyTransactionCoverage(ctx context.Context, f domain.Filter) (string, string, bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+
+	query, args := BuildMonthlyCoverage(f)
+	var min, max sql.NullTime
+	if err := r.DB.QueryRowContext(ctx, query, args...).Scan(&min, &max); err != nil {
+		return "", "", false, err
+	}
+	if !min.Valid || !max.Valid {
+		return "", "", false, nil
+	}
+	return min.Time.Format("2006-01-02"), max.Time.Format("2006-01-02"), true, nil
+}
+
 func (r Repository) summary(ctx context.Context, query string, args []any) (domain.Summary, error) {
 	var count int64
 	var total float64

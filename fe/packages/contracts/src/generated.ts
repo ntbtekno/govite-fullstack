@@ -37,4 +37,7 @@ export const SECURITY_POLICY = {
   inviteTtlMs: 604800000,
   emailVerificationTtlMs: 86400000,
   maxCodeAttempts: 5,
+  sessionIdleTtlMs: 900000,
+  sessionRememberIdleTtlMs: 3600000,
+  sessionAbsoluteTtlMs: 28800000,
 } as const
