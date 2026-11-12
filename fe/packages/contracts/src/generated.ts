@@ -6,7 +6,7 @@ export const MITRA_STAFF_ROLE_ID = "019a0000-0000-7000-8000-000000000003"
 
 export const SCOPES = ["self", "team", "mitra", "all"] as const
 export const ACTIONS = ["manage", "view", "create", "edit", "delete", "export"] as const
-export const RESOURCES = ["users", "roles", "permissions", "audit", "settings", "announcements", "webhooks", "apiKeys", "mitra", "billing", "payments"] as const
+export const RESOURCES = ["users", "roles", "permissions", "audit", "settings", "announcements", "webhooks", "apiKeys", "mitra", "billing", "payments", "va"] as const
 
 export const PERMISSIONS = [
   { resource: "users", action: "manage" },
@@ -25,6 +25,8 @@ export const PERMISSIONS = [
   { resource: "billing", action: "export" },
   { resource: "payments", action: "view" },
   { resource: "payments", action: "export" },
+  { resource: "va", action: "view" },
+  { resource: "va", action: "create" },
 ] as const
 
 export const SECURITY_POLICY = {

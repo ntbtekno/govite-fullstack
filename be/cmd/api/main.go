@@ -230,6 +230,18 @@ func seed(ctx context.Context, cfg config.Config, q *store.Queries) error {
 			}
 		}
 	}
+	// Create VA: MITRA_ADMIN dapat view + create, MITRA_STAFF hanya view.
+	// Superadmin tidak mendapat grant default untuk VA.
+	for _, p := range policy.MitraToolsPermissions {
+		if err := q.UpsertRolePermission(ctx, store.UpsertRolePermissionParams{ID: kernel.NewID(), RoleID: policy.MitraAdminRoleID, Resource: p.Resource, Action: p.Action, Scope: "mitra"}); err != nil {
+			return err
+		}
+		if p.Action == "view" {
+			if err := q.UpsertRolePermission(ctx, store.UpsertRolePermissionParams{ID: kernel.NewID(), RoleID: policy.MitraStaffRoleID, Resource: p.Resource, Action: p.Action, Scope: "mitra"}); err != nil {
+				return err
+			}
+		}
+	}
 	if cfg.SuperAdminEmail == "" || cfg.SuperAdminPassword == "" {
 		return fmt.Errorf("SUPER_ADMIN_EMAIL and SUPER_ADMIN_PASSWORD are required")
 	}

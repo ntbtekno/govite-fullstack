@@ -30,6 +30,7 @@ var Resources = []string{
 	"mitra",
 	"billing",
 	"payments",
+	"va",
 }
 
 type Permission struct {
@@ -60,6 +61,10 @@ var Permissions = []Permission{
 	{"billing", "export"},
 	{"payments", "view"},
 	{"payments", "export"},
+	// Create VA (menu di bagian Tools). Superadmin tidak mendapat grant default
+	// untuk VA; tetap bisa mengaturnya melalui editor permission.
+	{"va", "view"},
+	{"va", "create"},
 }
 
 // MitraReportPermissions are the reporting grants the seed gives to the mitra
@@ -72,12 +77,20 @@ var MitraReportPermissions = []Permission{
 	{"payments", "export"},
 }
 
+// MitraToolsPermissions are the tools grants the seed gives to the mitra roles.
+// They are deliberately excluded from the Superadmin default grants: the menus
+// are mitra-only.
+var MitraToolsPermissions = []Permission{
+	{"va", "view"},
+	{"va", "create"},
+}
+
 // SuperAdminPermissions is every known permission except the mitra-only report
 // ones.
 func SuperAdminPermissions() []Permission {
 	out := make([]Permission, 0, len(Permissions))
 	for _, p := range Permissions {
-		if p.Resource == "billing" || p.Resource == "payments" {
+		if p.Resource == "billing" || p.Resource == "payments" || p.Resource == "va" {
 			continue
 		}
 		out = append(out, p)

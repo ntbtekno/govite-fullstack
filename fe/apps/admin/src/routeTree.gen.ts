@@ -32,6 +32,7 @@ import { Route as AdminAdministrationSettingsRouteImport } from './routes/admin.
 import { Route as AdminAdministrationSystemRouteImport } from './routes/admin.administration.system'
 import { Route as AdminAdministrationUsersRouteImport } from './routes/admin.administration.users'
 import { Route as AdminAdministrationWebhooksRouteImport } from './routes/admin.administration.webhooks'
+import { Route as AdminToolsCreateVaRouteImport } from './routes/admin.tools.create-va'
 import { Route as AdminAdministrationRolesRoleIdRouteImport } from './routes/admin.administration.roles_.$roleId'
 import { Route as AdminAdministrationUsersUserIdRouteImport } from './routes/admin.administration.users_.$userId'
 
@@ -160,6 +161,11 @@ const AdminAdministrationWebhooksRoute =
     path: '/administration/webhooks',
     getParentRoute: () => AdminRoute,
   } as any)
+const AdminToolsCreateVaRoute = AdminToolsCreateVaRouteImport.update({
+  id: '/tools/create-va',
+  path: '/tools/create-va',
+  getParentRoute: () => AdminRoute,
+} as any)
 const AdminAdministrationRolesRoleIdRoute =
   AdminAdministrationRolesRoleIdRouteImport.update({
     id: '/administration/roles_/$roleId',
@@ -197,6 +203,7 @@ export interface FileRoutesByFullPath {
   '/admin/administration/system': typeof AdminAdministrationSystemRoute
   '/admin/administration/users': typeof AdminAdministrationUsersRoute
   '/admin/administration/webhooks': typeof AdminAdministrationWebhooksRoute
+  '/admin/tools/create-va': typeof AdminToolsCreateVaRoute
   '/admin/administration/roles/$roleId': typeof AdminAdministrationRolesRoleIdRoute
   '/admin/administration/users/$userId': typeof AdminAdministrationUsersUserIdRoute
 }
@@ -224,6 +231,7 @@ export interface FileRoutesByTo {
   '/admin/administration/system': typeof AdminAdministrationSystemRoute
   '/admin/administration/users': typeof AdminAdministrationUsersRoute
   '/admin/administration/webhooks': typeof AdminAdministrationWebhooksRoute
+  '/admin/tools/create-va': typeof AdminToolsCreateVaRoute
   '/admin/administration/roles/$roleId': typeof AdminAdministrationRolesRoleIdRoute
   '/admin/administration/users/$userId': typeof AdminAdministrationUsersUserIdRoute
 }
@@ -252,6 +260,7 @@ export interface FileRoutesById {
   '/admin/administration/system': typeof AdminAdministrationSystemRoute
   '/admin/administration/users': typeof AdminAdministrationUsersRoute
   '/admin/administration/webhooks': typeof AdminAdministrationWebhooksRoute
+  '/admin/tools/create-va': typeof AdminToolsCreateVaRoute
   '/admin/administration/roles_/$roleId': typeof AdminAdministrationRolesRoleIdRoute
   '/admin/administration/users_/$userId': typeof AdminAdministrationUsersUserIdRoute
 }
@@ -281,6 +290,7 @@ export interface FileRouteTypes {
     | '/admin/administration/system'
     | '/admin/administration/users'
     | '/admin/administration/webhooks'
+    | '/admin/tools/create-va'
     | '/admin/administration/roles/$roleId'
     | '/admin/administration/users/$userId'
   fileRoutesByTo: FileRoutesByTo
@@ -308,6 +318,7 @@ export interface FileRouteTypes {
     | '/admin/administration/system'
     | '/admin/administration/users'
     | '/admin/administration/webhooks'
+    | '/admin/tools/create-va'
     | '/admin/administration/roles/$roleId'
     | '/admin/administration/users/$userId'
   id:
@@ -335,6 +346,7 @@ export interface FileRouteTypes {
     | '/admin/administration/system'
     | '/admin/administration/users'
     | '/admin/administration/webhooks'
+    | '/admin/tools/create-va'
     | '/admin/administration/roles_/$roleId'
     | '/admin/administration/users_/$userId'
   fileRoutesById: FileRoutesById
@@ -513,6 +525,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminAdministrationWebhooksRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/admin/tools/create-va': {
+      id: '/admin/tools/create-va'
+      path: '/tools/create-va'
+      fullPath: '/admin/tools/create-va'
+      preLoaderRoute: typeof AdminToolsCreateVaRouteImport
+      parentRoute: typeof AdminRoute
+    }
     '/admin/administration/roles_/$roleId': {
       id: '/admin/administration/roles_/$roleId'
       path: '/administration/roles/$roleId'
@@ -546,6 +565,7 @@ interface AdminRouteChildren {
   AdminAdministrationSystemRoute: typeof AdminAdministrationSystemRoute
   AdminAdministrationUsersRoute: typeof AdminAdministrationUsersRoute
   AdminAdministrationWebhooksRoute: typeof AdminAdministrationWebhooksRoute
+  AdminToolsCreateVaRoute: typeof AdminToolsCreateVaRoute
   AdminAdministrationRolesRoleIdRoute: typeof AdminAdministrationRolesRoleIdRoute
   AdminAdministrationUsersUserIdRoute: typeof AdminAdministrationUsersUserIdRoute
 }
@@ -566,6 +586,7 @@ const AdminRouteChildren: AdminRouteChildren = {
   AdminAdministrationSystemRoute: AdminAdministrationSystemRoute,
   AdminAdministrationUsersRoute: AdminAdministrationUsersRoute,
   AdminAdministrationWebhooksRoute: AdminAdministrationWebhooksRoute,
+  AdminToolsCreateVaRoute: AdminToolsCreateVaRoute,
   AdminAdministrationRolesRoleIdRoute: AdminAdministrationRolesRoleIdRoute,
   AdminAdministrationUsersUserIdRoute: AdminAdministrationUsersUserIdRoute,
 }

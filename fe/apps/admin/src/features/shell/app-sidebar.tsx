@@ -118,6 +118,16 @@ const reports: Guarded[] = [
   },
 ]
 
+// Mitra-only Tools menus. The group is rendered only for a mitra session.
+const tools: Guarded[] = [
+  {
+    title: "Create VA",
+    url: "/admin/tools/create-va",
+    icon: <ActivityIcon />,
+    permission: ["va", "view"],
+  },
+]
+
 export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
   const { can, user } = useAuth()
   const settings = usePublicSettings()
@@ -134,6 +144,8 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
   )
   // The reporting group exists only for a mitra session.
   const reportItems = user?.mitraId ? visible(reports) : []
+  // The tools group exists only for a mitra session.
+  const toolItems = user?.mitraId ? visible(tools) : []
 
   return (
     <Sidebar variant="inset" {...props}>
@@ -162,6 +174,9 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
         <NavMain label="Overview" items={visible(overview)} />
         {reportItems.length > 0 && (
           <NavMain label="Laporan" items={reportItems} />
+        )}
+        {toolItems.length > 0 && (
+          <NavMain label="Tools" items={toolItems} />
         )}
         {adminItems.length > 0 && (
           <NavMain label="Administration" items={adminItems} />

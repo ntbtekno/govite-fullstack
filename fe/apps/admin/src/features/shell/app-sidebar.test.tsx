@@ -148,6 +148,46 @@ describe("AppSidebar Laporan group", () => {
   })
 })
 
+describe("AppSidebar Tools group", () => {
+  it("is hidden for a Superadmin even with va permissions", async () => {
+    state.user = {
+      id: "22222222-2222-4222-8222-222222222222",
+      mitraId: null,
+    }
+    state.granted = new Set(["va.view", "va.create"])
+    await renderSidebar()
+
+    expect(reportLink("Create VA")).toBeUndefined()
+    expect(document.body.textContent).not.toContain("Tools")
+  })
+
+  it("shows Create VA for a mitra with va.view", async () => {
+    state.user = {
+      id: "22222222-2222-4222-8222-222222222222",
+      mitraId: "33333333-3333-4333-8333-333333333333",
+    }
+    state.granted = new Set(["va.view"])
+    await renderSidebar()
+
+    expect(document.body.textContent).toContain("Tools")
+    expect(reportLink("Create VA")?.getAttribute("data-to")).toBe(
+      "/admin/tools/create-va"
+    )
+  })
+
+  it("hides Create VA for a mitra without va permission", async () => {
+    state.user = {
+      id: "22222222-2222-4222-8222-222222222222",
+      mitraId: "33333333-3333-4333-8333-333333333333",
+    }
+    state.granted = new Set()
+    await renderSidebar()
+
+    expect(reportLink("Create VA")).toBeUndefined()
+    expect(document.body.textContent).not.toContain("Tools")
+  })
+})
+
 describe("AppSidebar brand", () => {
   it("shows the correct app name and tagline with logo", async () => {
     state.user = { id: "11111111-1111-4111-8111-111111111111", mitraId: null }

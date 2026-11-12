@@ -46,6 +46,9 @@ export const PERMISSION_CATALOG: Record<string, PermissionCatalogEntry> = {
   "apiKeys.manage": { label: "Kelola API Key", category: "administration" },
   "mitra.manage": { label: "Kelola Mitra", category: "administration" },
   "mitra.view": { label: "Lihat Mitra", category: "administration" },
+
+  "va.view": { label: "Buat VA", category: "tools" },
+  "va.create": { label: "Buat VA", category: "tools" },
 }
 
 /** Label + category for a `resource.action` key; unknown keys fall back to the

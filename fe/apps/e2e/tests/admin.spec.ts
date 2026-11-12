@@ -1323,3 +1323,37 @@ test("mitra dashboard refetch on Terapkan keeps bars visible and shows updating 
 
   expect(problems).toEqual([])
 })
+
+// Mitra admin (MITRA_ADMIN) sees the Tools group and can open Create VA;
+// the page is blank: only the "Create VA" header, no form/API.
+test("mitra admin opens Create VA from Tools group (blank page, header only)", async ({
+  page,
+}) => {
+  const problems = watch(page)
+  await signInMitra(page)
+
+  // Tools group visible for mitra session holding va.view.
+  await expect(page.getByRole("link", { name: "Create VA" })).toBeVisible()
+  await page.getByRole("link", { name: "Create VA" }).click()
+  await expect(page).toHaveURL(/\/admin\/tools\/create-va/)
+
+  // Blank page: only the header, no form/API-driven content.
+  await expect(page.getByRole("heading", { name: "Create VA" })).toBeVisible()
+  await expect(page.locator("form")).toHaveCount(0)
+  await expect(page.locator("input")).toHaveCount(0)
+
+  expect(problems).toEqual([])
+})
+
+// Superadmin has no default va.view grant. A direct visit is therefore guarded
+// and returns to the dashboard, matching the report-route behavior.
+test("user without va.view is redirected from Create VA to dashboard", async ({
+  page,
+}) => {
+  const problems = watch(page)
+  await signIn(page)
+  await page.goto("/admin/tools/create-va")
+  await expect(page).toHaveURL(/\/admin\/dashboard$/)
+  await expect(page.getByRole("heading", { name: "Create VA" })).toHaveCount(0)
+  expect(problems).toEqual([])
+})
