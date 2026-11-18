@@ -9,7 +9,7 @@ export interface Session {
 
 export type RefreshResult =
   | { kind: "success"; session: Session }
-  | { kind: "expired"; message: string }
+  | { kind: "expired"; message: string; code: string }
   | { kind: "transient"; retryAfterMs: number; message: string }
 
 let inFlight: Promise<RefreshResult> | null = null
@@ -47,6 +47,7 @@ async function performRefresh(attempt = 1): Promise<RefreshResult> {
         return {
           kind: "expired",
           message: err.messageInd ?? "Sesi Anda telah berakhir. Silakan masuk kembali.",
+          code: err.code ?? "INVALID_REFRESH_TOKEN",
         }
       }
       if (isTransientError(err.status)) {

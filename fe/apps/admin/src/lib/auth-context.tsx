@@ -43,6 +43,36 @@ declare global {
   }
 }
 
+/** localStorage key for tracking whether the session expired notice has been shown for the current dead session. */
+const SESSION_EXPIRED_NOTICE_KEY = "govite:session-expired-notice-shown"
+
+/** Checks if the session expired notice has already been shown for the current dead session. */
+function hasNoticeBeenShown(): boolean {
+  try {
+    return localStorage.getItem(SESSION_EXPIRED_NOTICE_KEY) === "true"
+  } catch {
+    return false
+  }
+}
+
+/** Marks that the session expired notice has been shown for the current dead session. */
+function markNoticeShown(): void {
+  try {
+    localStorage.setItem(SESSION_EXPIRED_NOTICE_KEY, "true")
+  } catch {
+    // ignore
+  }
+}
+
+/** Clears the session expired notice marker (called on successful login or manual logout). */
+function clearNoticeMarker(): void {
+  try {
+    localStorage.removeItem(SESSION_EXPIRED_NOTICE_KEY)
+  } catch {
+    // ignore
+  }
+}
+
 type SettledStatus = "authenticated" | "anonymous"
 type AuthStatus = "loading" | SettledStatus
 
@@ -146,6 +176,9 @@ const handleExpired = useCallback((_message?: string) => {
     queryClient.clear()
     setState({ status: "anonymous", user: null })
     setIdleWarning(false)
+    // Only show the notice once per dead session.
+    if (hasNoticeBeenShown()) return
+    markNoticeShown()
     // Store expiry message in a cookie for the login page to display.
     // Use fixed Indonesian message as required, not the backend message.
     const fixedMessage = "Sesi Anda telah berakhir. Silakan masuk kembali."
@@ -182,12 +215,21 @@ const handleExpired = useCallback((_message?: string) => {
         setAccessToken(session.accessToken)
         rememberAuthKind(session.user.mitraId)
         watchdog.schedule(session.accessToken)
+        // Clear the notice marker on successful boot (valid session restored).
+        clearNoticeMarker()
         if (!cancelled)
           setState({ status: "authenticated", user: session.user })
         boot.settle({ status: "authenticated", user: session.user })
       } else if (result.kind === "expired") {
-        // Expired during boot: trigger session expired flow with message
-        handleExpired()
+        // Only show session expired message if there was a previous session
+        // (i.e., refresh token was sent but invalid/expired/revoked).
+        // MISSING_REFRESH_TOKEN means no cookie was sent → no previous session.
+        const hadPreviousSession = result.code !== "MISSING_REFRESH_TOKEN"
+        if (hadPreviousSession && !hasNoticeBeenShown()) {
+          handleExpired()
+        } else {
+          if (!cancelled) setState({ status: "anonymous", user: null })
+        }
         boot.settle({ status: "anonymous", user: null })
       } else {
         // Transient during boot: treat as anonymous, watchdog will retry
@@ -249,6 +291,8 @@ const handleExpired = useCallback((_message?: string) => {
     queryClient.clear()
     const user = await authApi.getMe(result.accessToken)
     rememberAuthKind(user.mitraId)
+    // Clear the session expired notice marker on successful login (new session).
+    clearNoticeMarker()
     // Synchronous so the router's context is updated before a caller's
     // post-login navigate() runs - otherwise beforeLoad reads the stale
     // pre-login snapshot and bounces straight back to /login.
@@ -326,6 +370,8 @@ const handleExpired = useCallback((_message?: string) => {
     flushSync(() => setState({ status: "anonymous", user: null }))
     // Clear any session expiry message on manual logout
     document.cookie = "sessionExpiredMessage=; path=/; max-age=0"
+    // Clear the session expired notice marker on manual logout.
+    clearNoticeMarker()
     // Clear only after the state flip has unmounted the admin pages: clearing
     // under mounted queries makes them refetch with no token (401 + refresh).
     queryClient.clear()

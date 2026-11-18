@@ -104,6 +104,7 @@ describe("SessionWatchdog", () => {
     vi.spyOn(refreshModule, "refreshSession").mockResolvedValue({
       kind: "expired",
       message: "Session expired",
+      code: "INVALID_REFRESH_TOKEN",
     })
 
     watchdog.schedule(token)
@@ -239,7 +240,7 @@ describe("SessionWatchdog", () => {
         return { kind: "transient", retryAfterMs: 30_000, message: "Rate limited" }
       }
       // Second call: expired (401)
-      return { kind: "expired", message: "Session expired" }
+      return { kind: "expired", message: "Session expired", code: "INVALID_REFRESH_TOKEN" }
     })
 
     watchdog.schedule(token)

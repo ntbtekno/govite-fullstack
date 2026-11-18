@@ -46,6 +46,7 @@ describe("authedRequest / withRefresh", () => {
     vi.mocked(refreshSession).mockResolvedValue({
       kind: "expired",
       message: "Sesi Anda telah berakhir. Silakan masuk kembali.",
+      code: "INVALID_REFRESH_TOKEN",
     })
 
     await expect(authedRequestModule.authedRequest("/test")).rejects.toThrow(originalError)

@@ -513,14 +513,66 @@ test("expired mitra session lands on /login-mitra", async ({ page }) => {
   await page.getByRole("button", { name: "Sign in" }).click()
   await expect(page).toHaveURL(/\/admin\/dashboard/)
 
+  // Simulate session expiry by clearing cookies (removes refresh token).
+  // With the fix, MISSING_REFRESH_TOKEN means no previous session → no notice.
+  // The notice only appears for INVALID_REFRESH_TOKEN/REUSE_DETECTED.
   await page.context().clearCookies()
   await page.reload()
   await expect(page).toHaveURL(/\/login-mitra(\?|$)/)
   // Wait for login form to be visible (ensures React has mounted)
   await expect(page.getByLabel("Kode Mitra")).toBeVisible()
-  // Session expired message should be visible on login-mitra page
-  await expect(page.getByText("Sesi Anda telah berakhir. Silakan masuk kembali.")).toBeVisible()
+  // No session expired message because cookies were cleared (no previous session).
+  await expect(page.getByText("Sesi Anda telah berakhir. Silakan masuk kembali.")).not.toBeVisible()
 
+  expect(problems).toEqual([])
+})
+
+async function assertExpiredNoticeOnlyOnce(page: Page, remember: boolean) {
+  await signInWithRemember(page, remember)
+
+  // Keep a refresh cookie but make its value invalid. This is the browser-level
+  // equivalent of a revoked/expired refresh family: the first boot receives
+  // INVALID_REFRESH_TOKEN, rather than MISSING_REFRESH_TOKEN.
+  const refresh = (await page.context().cookies()).find(
+    (cookie) => cookie.name === "refresh_token"
+  )
+  expect(refresh).toBeTruthy()
+  await page.context().addCookies([
+    { ...refresh!, value: "expired-invalid-refresh-token" },
+  ])
+
+  await page.goto("/login")
+  await expect(page).toHaveURL(/\/login(\?.*)?$/)
+  await expect(page.getByLabel("Username atau Email")).toBeVisible()
+  await expect(
+    page.getByText("Sesi Anda telah berakhir. Silakan masuk kembali.")
+  ).toBeVisible()
+
+  // The first 401 response clears the refresh cookie server-side and the
+  // client marker prevents the notice from being recreated on later boots.
+  for (let reload = 0; reload < 2; reload++) {
+    await page.reload()
+    await expect(page).toHaveURL(/\/login(\?.*)?$/)
+    await expect(page.getByLabel("Username atau Email")).toBeVisible()
+    await expect(
+      page.getByText("Sesi Anda telah berakhir. Silakan masuk kembali.")
+    ).not.toBeVisible()
+  }
+}
+
+test("expired session on login page shows the notice at most once across three reloads", async ({
+  page,
+}) => {
+  const problems = watch(page)
+  await assertExpiredNoticeOnlyOnce(page, false)
+  expect(problems).toEqual([])
+})
+
+test("remember-me expired session on login page shows the notice at most once across three reloads", async ({
+  page,
+}) => {
+  const problems = watch(page)
+  await assertExpiredNoticeOnlyOnce(page, true)
   expect(problems).toEqual([])
 })
 
@@ -528,13 +580,16 @@ test("expired Superadmin session lands on /login", async ({ page }) => {
   const problems = watch(page)
   await signIn(page)
 
+  // Simulate session expiry by clearing cookies (removes refresh token).
+  // With the fix, MISSING_REFRESH_TOKEN means no previous session → no notice.
+  // The notice only appears for INVALID_REFRESH_TOKEN/REUSE_DETECTED.
   await page.context().clearCookies()
   await page.reload()
   await expect(page).toHaveURL(/\/login(\?.*)?$/)
   // Wait for login form to be visible (ensures React has mounted)
   await expect(page.getByLabel("Username atau Email")).toBeVisible()
-  // Session expired message should be visible on login page
-  await expect(page.getByText("Sesi Anda telah berakhir. Silakan masuk kembali.")).toBeVisible()
+  // No session expired message because cookies were cleared (no previous session).
+  await expect(page.getByText("Sesi Anda telah berakhir. Silakan masuk kembali.")).not.toBeVisible()
 
   expect(problems).toEqual([])
 })
