@@ -58,6 +58,7 @@ import (
 	usersapp "govite/internal/users/application"
 	usersinfra "govite/internal/users/infrastructure"
 	usershttp "govite/internal/users/interface/http"
+	vadomain "govite/internal/va/domain"
 )
 
 // Deps are the process-level adapters main builds once.
@@ -83,6 +84,9 @@ type Deps struct {
 	// LoginLog, when non-nil, records one text line per login attempt. Tests can
 	// inject one rooted at a temp dir.
 	LoginLog authhttp.AttemptLogger
+	// SNAP is the Create VA gateway client. Nil when SNAP_BASE_URL is unset
+	// (the feature is off). Built in cmd/api so a bad secret fails the boot.
+	SNAP vadomain.Gateway
 }
 
 // LoginAttempt is one line's metadata, re-exported so cmd/api does not import

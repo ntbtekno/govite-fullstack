@@ -85,6 +85,90 @@ func TestTokenTTLInvalid(t *testing.T) {
 	}
 }
 
+// setBaseEnv sets the required non-SNAP vars so a Load() can succeed.
+func setBaseEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("DATABASE_URL", "postgres://x")
+	t.Setenv("JWT_ACCESS_SECRET", "a-very-long-secret-that-is-at-least-32-bytes")
+	t.Setenv("REFRESH_TOKEN_PEPPER", "a-pepper-16-bytes-min")
+}
+
+// TestSNAPDisabledWhenBaseURLEmpty proves an empty SNAP_BASE_URL disables the
+// feature and the server still boots (no required-var errors).
+func TestSNAPDisabledWhenBaseURLEmpty(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("SNAP_BASE_URL", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("empty SNAP_BASE_URL must not fail boot: %v", err)
+	}
+	if cfg.SNAPEnabled() {
+		t.Fatal("SNAPEnabled() must be false with an empty base URL")
+	}
+}
+
+// TestSNAPRequiresFieldsWhenBaseURLSet proves a half-configured gateway fails
+// the boot: BaseURL set but a non-secret field or a secret file path missing.
+func TestSNAPRequiresFieldsWhenBaseURLSet(t *testing.T) {
+	// Only BaseURL set: every dependent field is missing.
+	setBaseEnv(t)
+	t.Setenv("SNAP_BASE_URL", "http://127.0.0.1:8080")
+	t.Setenv("SNAP_PARTNER_ID", "")
+	t.Setenv("SNAP_CLIENT_ID", "")
+	t.Setenv("SNAP_CHANNEL_ID", "")
+	t.Setenv("SNAP_HMAC_SECRET_FILE", "")
+	t.Setenv("SNAP_RSA_PRIVATE_KEY_FILE", "")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("a half-configured SNAP gateway must fail the boot")
+	}
+	for _, key := range []string{"SNAP_PARTNER_ID", "SNAP_CLIENT_ID", "SNAP_CHANNEL_ID", "SNAP_HMAC_SECRET_FILE", "SNAP_RSA_PRIVATE_KEY_FILE"} {
+		if !strings.Contains(err.Error(), key) {
+			t.Fatalf("boot error must name %s, got %v", key, err)
+		}
+	}
+
+	// A complete config passes. The secret files are not read by Load; the
+	// client reads and validates them at construction.
+	setBaseEnv(t)
+	t.Setenv("SNAP_BASE_URL", "http://127.0.0.1:8080")
+	t.Setenv("SNAP_PARTNER_ID", "578")
+	t.Setenv("SNAP_CLIENT_ID", "010")
+	t.Setenv("SNAP_CHANNEL_ID", "02030")
+	t.Setenv("SNAP_HMAC_SECRET_FILE", "/tmp/hmac")
+	t.Setenv("SNAP_RSA_PRIVATE_KEY_FILE", "/tmp/key")
+	t.Setenv("SNAP_ORIGIN", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("complete SNAP config must load: %v", err)
+	}
+	if !cfg.SNAPEnabled() || cfg.SNAPBaseURL != "http://127.0.0.1:8080" {
+		t.Fatalf("unexpected SNAP config: %+v", cfg)
+	}
+}
+
+// TestSNAPBaseURLTrailingSlashTrimmed proves the base URL is stored without a
+// trailing slash so path joins stay exact.
+func TestSNAPBaseURLTrailingSlashTrimmed(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("SNAP_BASE_URL", "http://127.0.0.1:8080/")
+	t.Setenv("SNAP_PARTNER_ID", "578")
+	t.Setenv("SNAP_CLIENT_ID", "010")
+	t.Setenv("SNAP_CHANNEL_ID", "02030")
+	t.Setenv("SNAP_HMAC_SECRET_FILE", "/tmp/hmac")
+	t.Setenv("SNAP_RSA_PRIVATE_KEY_FILE", "/tmp/key")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.SNAPBaseURL != "http://127.0.0.1:8080" {
+		t.Fatalf("SNAPBaseURL = %q, want no trailing slash", cfg.SNAPBaseURL)
+	}
+}
+
 // TestE2EHooksDisabledInProduction proves the fixed captcha code and the
 // throwaway mitra seed are inert in production even when their env vars are
 // set: no captcha backdoor, no e2e login shortcut on a live server.

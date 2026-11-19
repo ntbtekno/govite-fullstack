@@ -33,6 +33,7 @@ import (
 	"govite/internal/policy"
 	reportsinfra "govite/internal/reports/infrastructure"
 	"govite/internal/server"
+	snapinfra "govite/internal/va/infrastructure"
 )
 
 func main() {
@@ -137,6 +138,22 @@ func serve(ctx context.Context, cfg config.Config, pool *pgxpool.Pool) error {
 		slog.Error("firebase init failed; push disabled", "err", err)
 	} else if push != nil { // a nil *FCM in the interface would look enabled
 		d.Push = push
+	}
+
+	// SNAP Create VA gateway. Empty SNAP_BASE_URL disables it (nil client).
+	// When configured, a bad secret file or invalid RSA PEM fails the boot here.
+	if snap, err := snapinfra.New(snapinfra.Config{
+		BaseURL:           cfg.SNAPBaseURL,
+		PartnerID:         cfg.SNAPPartnerID,
+		ClientID:          cfg.SNAPClientID,
+		ChannelID:         cfg.SNAPChannelID,
+		Origin:            cfg.SNAPOrigin,
+		HMACSecretFile:    cfg.SNAPHMACSecretFile,
+		RSAPrivateKeyFile: cfg.SNAPRSAPrivateKeyFile,
+	}); err != nil {
+		return fmt.Errorf("SNAP: %w", err)
+	} else if snap != nil {
+		d.SNAP = snap
 	}
 
 	// Optional read-only MySQL reporting sidecar. Empty DSN keeps the server
