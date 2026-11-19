@@ -21,6 +21,7 @@ import (
 	"math/big"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,8 +31,9 @@ import (
 )
 
 const (
-	tokenPath  = "/api/v1.0/access-token/b2b"
-	createPath = "/api/v1.0/transfer-va/create-va"
+	tokenPath   = "/api/v1.0/access-token/b2b"
+	createPath  = "/api/v1.0/transfer-va/create-va"
+	inquiryPath = "/api/v1.0/transfer-va/inquiry-va"
 
 	// Outbound budgets: the token endpoint is fast, while Create VA waits on
 	// CBS inside the gateway for a few seconds.
@@ -54,13 +56,10 @@ const (
 // come from SNAP_* env; the two secrets come from file paths. PartnerServiceID
 // is deliberately absent: it is derived per mitra and passed on each request.
 type Config struct {
-	BaseURL           string
-	PartnerID         string
-	ClientID          string
-	ChannelID         string
-	Origin            string
-	HMACSecretFile    string
-	RSAPrivateKeyFile string
+	BaseURL    string
+	SecretsDir string
+	ChannelID  string
+	Origin     string
 	// HTTPClient overrides the default client (tests inject httptest's). A nil
 	// client gets a fresh one; http.DefaultClient is never used.
 	HTTPClient *http.Client
@@ -73,38 +72,41 @@ type Config struct {
 // token is guarded by a mutex.
 type Client struct {
 	baseURL    string
-	partnerID  string
-	clientID   string
+	secretsDir string
 	channelID  string
 	origin     string
-	secret     []byte
-	privateKey *rsa.PrivateKey
 	http       *http.Client
 
 	now func() string
 
-	mu        sync.Mutex
-	token     string
-	expiresAt time.Time
+	mu      sync.Mutex
+	bundles map[string]*credentialBundle
+}
+
+type credentialBundle struct {
+	partnerID  string
+	clientID   string
+	secret     []byte
+	privateKey *rsa.PrivateKey
+	mu         sync.Mutex
+	token      string
+	expiresAt  time.Time
 }
 
 var _ vadomain.Gateway = (*Client)(nil)
 
-// New builds a client. An empty BaseURL returns (nil, nil): the feature is
-// disabled and the server still boots. When BaseURL is set the two secret files
-// are required and are read and parsed here, so a bad secret fails the boot
-// rather than the first request.
+// New builds a client. Individual bundles are loaded lazily so one malformed
+// mitra does not fail boot; only an unreadable secrets root fails construction.
 func New(cfg Config) (*Client, error) {
 	if cfg.BaseURL == "" {
 		return nil, nil
 	}
-	secret, err := readSecret(cfg.HMACSecretFile)
-	if err != nil {
-		return nil, fmt.Errorf("snap: HMAC secret: %w", err)
-	}
-	key, err := readPrivateKey(cfg.RSAPrivateKeyFile)
-	if err != nil {
-		return nil, fmt.Errorf("snap: RSA private key: %w", err)
+	info, err := os.Stat(cfg.SecretsDir)
+	if err != nil || !info.IsDir() {
+		if err == nil {
+			err = errors.New("not a directory")
+		}
+		return nil, fmt.Errorf("snap: secrets directory: %w", err)
 	}
 	httpClient := cfg.HTTPClient
 	if httpClient == nil {
@@ -115,16 +117,41 @@ func New(cfg Config) (*Client, error) {
 		now = nowTimestamp
 	}
 	return &Client{
-		baseURL:    strings.TrimRight(cfg.BaseURL, "/"),
-		partnerID:  cfg.PartnerID,
-		clientID:   cfg.ClientID,
-		channelID:  cfg.ChannelID,
-		origin:     cfg.Origin,
-		secret:     secret,
-		privateKey: key,
-		http:       httpClient,
-		now:        now,
+		baseURL: strings.TrimRight(cfg.BaseURL, "/"), secretsDir: cfg.SecretsDir,
+		channelID: cfg.ChannelID, origin: cfg.Origin, http: httpClient, now: now,
+		bundles: make(map[string]*credentialBundle),
 	}, nil
+}
+
+func (c *Client) bundle(kode string) (*credentialBundle, error) {
+	if kode == "" || filepath.Base(kode) != kode {
+		return nil, vadomain.ErrCredentialsUnavailable
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if b := c.bundles[kode]; b != nil {
+		return b, nil
+	}
+	dir := filepath.Join(c.secretsDir, kode)
+	var partner struct {
+		PartnerID string `json:"partnerId"`
+		ClientID  string `json:"clientId"`
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "partner.json"))
+	if err != nil || json.Unmarshal(raw, &partner) != nil || partner.PartnerID == "" || partner.ClientID == "" {
+		return nil, vadomain.ErrCredentialsUnavailable
+	}
+	secret, err := readSecret(filepath.Join(dir, "hmac.secret"))
+	if err != nil {
+		return nil, vadomain.ErrCredentialsUnavailable
+	}
+	key, err := readPrivateKey(filepath.Join(dir, "private.pem"))
+	if err != nil {
+		return nil, vadomain.ErrCredentialsUnavailable
+	}
+	b := &credentialBundle{partnerID: partner.PartnerID, clientID: partner.ClientID, secret: secret, privateKey: key}
+	c.bundles[kode] = b
+	return b, nil
 }
 
 // Enabled reports whether the client is configured.
@@ -143,6 +170,9 @@ func readSecret(path string) ([]byte, error) {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return nil, errors.New("secret file is empty")
 	}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm()&0o077 != 0 {
+		return nil, errors.New("secret file permissions must be 0600")
+	}
 	return raw, nil
 }
 
@@ -155,6 +185,9 @@ func readPrivateKey(path string) (*rsa.PrivateKey, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
+	}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm()&0o077 != 0 {
+		return nil, errors.New("private key permissions must be 0600")
 	}
 	block, _ := pem.Decode(raw)
 	if block == nil {
@@ -177,7 +210,13 @@ func readPrivateKey(path string) (*rsa.PrivateKey, error) {
 // CreateVA builds the business body, signs it and calls the gateway. Success is
 // 2002700 with status ACTIVE only; every other answer becomes a typed error.
 func (c *Client) CreateVA(ctx context.Context, req vadomain.CreateRequest) (vadomain.CreateResult, error) {
-	accessToken, err := c.accessToken(ctx)
+	bundle, err := c.bundle(req.MitraKode)
+	if err != nil {
+		return vadomain.CreateResult{}, err
+	}
+	// partnerServiceId is the mitra code, never a caller-configured global.
+	req.PartnerServiceID = req.MitraKode
+	accessToken, err := c.accessToken(ctx, bundle)
 	if err != nil {
 		return vadomain.CreateResult{}, err
 	}
@@ -193,15 +232,15 @@ func (c *Client) CreateVA(ctx context.Context, req vadomain.CreateRequest) (vado
 	timestamp := c.now()
 	minified := minify(string(bodyRaw))
 	hash := bodyHash(minified)
-	signature := hmacSHA512Base64(string(c.secret), businessStringToSign(http.MethodPost, createPath, accessToken, hash, timestamp))
+	signature := hmacSHA512Base64(string(bundle.secret), businessStringToSign(http.MethodPost, createPath, accessToken, hash, timestamp))
 
 	headers := map[string]string{
 		"Authorization": "Bearer " + accessToken,
 		"Content-Type":  "application/json",
 		"X-TIMESTAMP":   timestamp,
 		"X-SIGNATURE":   signature,
-		"X-PARTNER-ID":  c.partnerID,
-		"X-EXTERNAL-ID": newExternalID(),
+		"X-PARTNER-ID":  bundle.partnerID,
+		"X-EXTERNAL-ID": requestExternalID(req.ExternalID),
 		"CHANNEL-ID":    c.channelID,
 	}
 	if c.origin != "" {
@@ -210,11 +249,54 @@ func (c *Client) CreateVA(ctx context.Context, req vadomain.CreateRequest) (vado
 
 	reqCtx, cancel := context.WithTimeout(ctx, createTimeout)
 	defer cancel()
-	status, raw, err := c.do(reqCtx, http.MethodPost, createPath, headers, bodyRaw)
+	status, raw, retryIn, err := c.do(reqCtx, http.MethodPost, createPath, headers, bodyRaw)
 	if err != nil {
 		return vadomain.CreateResult{}, err
 	}
-	return parseCreateResponse(status, raw)
+	result, err := parseCreateResponse(status, raw)
+	if status == http.StatusTooManyRequests && err != nil {
+		return result, vadomain.RateLimited(retryIn)
+	}
+	return result, err
+}
+
+// InquiryVA checks the deterministic full VA number for the same trxId after a
+// transient create outcome. It never contacts CBS directly and never retries.
+func (c *Client) InquiryVA(ctx context.Context, req vadomain.InquiryRequest) (vadomain.CreateResult, error) {
+	bundle, err := c.bundle(req.MitraKode)
+	if err != nil {
+		return vadomain.CreateResult{}, err
+	}
+	accessToken, err := c.accessToken(ctx, bundle)
+	if err != nil {
+		return vadomain.CreateResult{}, err
+	}
+	bodyRaw, err := json.Marshal(map[string]any{
+		"partnerServiceId": padLeft(req.MitraKode, 8),
+		"customerNo":       req.CustomerNo,
+		"virtualAccountNo": padLeft(req.MitraKode+"41"+req.CustomerNo, 24),
+		"trxId":            req.TrxID,
+	})
+	if err != nil {
+		return vadomain.CreateResult{}, err
+	}
+	timestamp := c.now()
+	signature := hmacSHA512Base64(string(bundle.secret), businessStringToSign(http.MethodPost, inquiryPath, accessToken, bodyHash(minify(string(bodyRaw))), timestamp))
+	headers := map[string]string{
+		"Authorization": "Bearer " + accessToken, "Content-Type": "application/json",
+		"X-TIMESTAMP": timestamp, "X-SIGNATURE": signature,
+		"X-PARTNER-ID": bundle.partnerID, "X-EXTERNAL-ID": newExternalID(), "CHANNEL-ID": c.channelID,
+	}
+	if c.origin != "" {
+		headers["Origin"] = c.origin
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, createTimeout)
+	defer cancel()
+	status, raw, _, err := c.do(reqCtx, http.MethodPost, inquiryPath, headers, bodyRaw)
+	if err != nil {
+		return vadomain.CreateResult{}, err
+	}
+	return parseInquiryResponse(status, raw)
 }
 
 // buildBody shapes the gateway body. The request-side virtualAccountNo is NOT
@@ -251,36 +333,36 @@ func buildBody(req vadomain.CreateRequest) (map[string]any, error) {
 
 // accessToken returns a cached token while its remaining life exceeds the skew,
 // otherwise fetches a new one.
-func (c *Client) accessToken(ctx context.Context) (string, error) {
-	c.mu.Lock()
-	if c.token != "" && time.Now().Before(c.expiresAt.Add(-tokenRefreshSkew)) {
-		token := c.token
-		c.mu.Unlock()
+func (c *Client) accessToken(ctx context.Context, bundle *credentialBundle) (string, error) {
+	bundle.mu.Lock()
+	if bundle.token != "" && time.Now().Before(bundle.expiresAt.Add(-tokenRefreshSkew)) {
+		token := bundle.token
+		bundle.mu.Unlock()
 		return token, nil
 	}
-	c.mu.Unlock()
+	bundle.mu.Unlock()
 
-	token, ttl, err := c.fetchToken(ctx)
+	token, ttl, err := c.fetchToken(ctx, bundle)
 	if err != nil {
 		return "", err
 	}
-	c.mu.Lock()
-	c.token, c.expiresAt = token, time.Now().Add(ttl)
-	c.mu.Unlock()
+	bundle.mu.Lock()
+	bundle.token, bundle.expiresAt = token, time.Now().Add(ttl)
+	bundle.mu.Unlock()
 	return token, nil
 }
 
 // fetchToken requests a fresh service token with the RSA signature.
-func (c *Client) fetchToken(ctx context.Context) (string, time.Duration, error) {
+func (c *Client) fetchToken(ctx context.Context, bundle *credentialBundle) (string, time.Duration, error) {
 	timestamp := c.now()
-	signature, err := c.rsaTokenSignature(tokenStringToSign(c.clientID, timestamp))
+	signature, err := rsaTokenSignature(bundle.privateKey, tokenStringToSign(bundle.clientID, timestamp))
 	if err != nil {
 		return "", 0, err
 	}
 	headers := map[string]string{
 		"Content-Type": "application/json",
 		"X-TIMESTAMP":  timestamp,
-		"X-CLIENT-KEY": c.clientID,
+		"X-CLIENT-KEY": bundle.clientID,
 		"X-SIGNATURE":  signature,
 	}
 	if c.origin != "" {
@@ -290,7 +372,7 @@ func (c *Client) fetchToken(ctx context.Context) (string, time.Duration, error) 
 
 	reqCtx, cancel := context.WithTimeout(ctx, tokenTimeout)
 	defer cancel()
-	status, raw, err := c.do(reqCtx, http.MethodPost, tokenPath, headers, payload)
+	status, raw, _, err := c.do(reqCtx, http.MethodPost, tokenPath, headers, payload)
 	if err != nil {
 		return "", 0, err
 	}
@@ -326,9 +408,9 @@ func (c *Client) fetchToken(ctx context.Context) (string, time.Duration, error) 
 
 // rsaTokenSignature signs clientId|timestamp with SHA256withRSA (PKCS#1 v1.5)
 // and returns Base64 (spec Bagian 4.1).
-func (c *Client) rsaTokenSignature(stringToSign string) (string, error) {
+func rsaTokenSignature(privateKey *rsa.PrivateKey, stringToSign string) (string, error) {
 	digest := sha256.Sum256([]byte(stringToSign))
-	sig, err := rsa.SignPKCS1v15(rand.Reader, c.privateKey, crypto.SHA256, digest[:])
+	sig, err := rsa.SignPKCS1v15(rand.Reader, privateKey, crypto.SHA256, digest[:])
 	if err != nil {
 		return "", fmt.Errorf("snap: sign token: %w", err)
 	}
@@ -337,27 +419,35 @@ func (c *Client) rsaTokenSignature(stringToSign string) (string, error) {
 
 // do sends one request and returns the status and the raw body. It always
 // closes the response body and never uses http.DefaultClient.
-func (c *Client) do(ctx context.Context, method, path string, headers map[string]string, body []byte) (int, []byte, error) {
+func (c *Client) do(ctx context.Context, method, path string, headers map[string]string, body []byte) (int, []byte, time.Duration, error) {
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, bytes.NewReader(body))
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, 0, err
 	}
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
 	res, err := c.http.Do(req)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, 0, err
 	}
 	defer res.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(res.Body, maxErrorBody+1))
 	if err != nil {
-		return res.StatusCode, nil, err
+		return res.StatusCode, nil, 0, err
 	}
 	if len(raw) > maxErrorBody {
 		raw = raw[:maxErrorBody]
 	}
-	return res.StatusCode, raw, nil
+	return res.StatusCode, raw, retryAfter(res.Header.Get("Retry-After")), nil
+}
+
+func retryAfter(header string) time.Duration {
+	seconds, err := strconv.Atoi(strings.TrimSpace(header))
+	if err != nil || seconds < 1 {
+		return 0
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 // parseCreateResponse validates success and maps the gateway error codes.
@@ -430,6 +520,32 @@ func parseCreateResponse(status int, raw []byte) (vadomain.CreateResult, error) 
 	return vadomain.CreateResult{}, vadomain.ErrUnexpectedCode.WithDetail(detail)
 }
 
+func parseInquiryResponse(status int, raw []byte) (vadomain.CreateResult, error) {
+	var res struct {
+		ResponseCode       string `json:"responseCode"`
+		ResponseMessage    string `json:"responseMessage"`
+		VirtualAccountData *struct {
+			CustomerNo       string `json:"customerNo"`
+			VirtualAccountNo string `json:"virtualAccountNo"`
+			TrxID            string `json:"trxId"`
+			ReferenceNo      string `json:"referenceNo"`
+			Status           string `json:"status"`
+		} `json:"virtualAccountData"`
+	}
+	if err := json.Unmarshal(raw, &res); err != nil {
+		return vadomain.CreateResult{}, vadomain.ErrUnexpectedCode.WithDetail("unreadable inquiry response")
+	}
+	if status == http.StatusOK && res.ResponseCode == "2003000" && res.VirtualAccountData != nil && res.VirtualAccountData.Status == "ACTIVE" {
+		d := res.VirtualAccountData
+		return vadomain.CreateResult{ResponseCode: res.ResponseCode, ResponseMessage: res.ResponseMessage, VirtualAccountNo: strings.TrimSpace(d.VirtualAccountNo), CustomerNo: d.CustomerNo, TrxID: d.TrxID, ReferenceNo: d.ReferenceNo, Status: d.Status, Raw: raw}, nil
+	}
+	detail := res.ResponseCode
+	if detail == "" {
+		detail = strconv.Itoa(status)
+	}
+	return vadomain.CreateResult{}, vadomain.ErrUnexpectedCode.WithDetail(detail)
+}
+
 // newExternalID returns a fresh 16-character alphanumeric id. A new value is
 // required for every new processing attempt (spec Bagian 4.2).
 func newExternalID() string {
@@ -447,4 +563,11 @@ func newExternalID() string {
 		buf[i] = alphabet[n.Int64()]
 	}
 	return string(buf)
+}
+
+func requestExternalID(id string) string {
+	if id != "" {
+		return id
+	}
+	return newExternalID()
 }

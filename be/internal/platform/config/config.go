@@ -65,17 +65,12 @@ type Config struct {
 	SentryDSN                  string
 	SentryEnvironment          string
 
-	// SNAP gateway (Create VA). All optional: an empty BaseURL disables the
-	// feature and the server still boots. When BaseURL is set the two secret
-	// files are required and must be readable; a broken secret fails the boot.
-	// partnerServiceId is NOT here: it is derived per mitra, not a global value.
-	SNAPBaseURL           string
-	SNAPPartnerID         string
-	SNAPClientID          string
-	SNAPChannelID         string
-	SNAPOrigin            string
-	SNAPHMACSecretFile    string
-	SNAPRSAPrivateKeyFile string
+	// SNAP gateway (Create VA). Credentials are loaded lazily per mitra from
+	// SNAPSecretsDir/<kode>; only the directory itself is validated at boot.
+	SNAPBaseURL    string
+	SNAPSecretsDir string
+	SNAPChannelID  string
+	SNAPOrigin     string
 }
 
 // SNAPEnabled reports whether the SNAP Create VA gateway is configured.
@@ -191,12 +186,9 @@ func Load() (Config, error) {
 		SentryDSN:                  str("SENTRY_DSN", ""),
 		SentryEnvironment:          str("SENTRY_ENVIRONMENT", ""),
 		SNAPBaseURL:                strings.TrimRight(str("SNAP_BASE_URL", ""), "/"),
-		SNAPPartnerID:              str("SNAP_PARTNER_ID", ""),
-		SNAPClientID:               str("SNAP_CLIENT_ID", ""),
+		SNAPSecretsDir:             str("SNAP_SECRETS_DIR", ""),
 		SNAPChannelID:              str("SNAP_CHANNEL_ID", ""),
 		SNAPOrigin:                 str("SNAP_ORIGIN", ""),
-		SNAPHMACSecretFile:         str("SNAP_HMAC_SECRET_FILE", ""),
-		SNAPRSAPrivateKeyFile:      str("SNAP_RSA_PRIVATE_KEY_FILE", ""),
 	}
 	for _, o := range strings.Split(str("CORS_ORIGIN", ""), ",") {
 		if o = strings.TrimSpace(o); o != "" {
@@ -221,17 +213,12 @@ func Load() (Config, error) {
 	if _, err := mail.ParseAddress(c.SMTPFrom); err != nil {
 		errs = append(errs, "SMTP_FROM must be an email")
 	}
-	// SNAP fails fast only when it is turned on: BaseURL empty means the
-	// feature is off and a half-configured gateway must never boot silently.
-	// partnerServiceId is per mitra (passed by the caller), not checked here;
-	// the secret files are read and validated by the client at construction.
+	// Individual mitra bundles are intentionally not inspected here: one broken
+	// mitra must not stop every other mitra. The client validates the root dir.
 	if c.SNAPEnabled() {
 		for key, v := range map[string]string{
-			"SNAP_PARTNER_ID":           c.SNAPPartnerID,
-			"SNAP_CLIENT_ID":            c.SNAPClientID,
-			"SNAP_CHANNEL_ID":           c.SNAPChannelID,
-			"SNAP_HMAC_SECRET_FILE":     c.SNAPHMACSecretFile,
-			"SNAP_RSA_PRIVATE_KEY_FILE": c.SNAPRSAPrivateKeyFile,
+			"SNAP_SECRETS_DIR": c.SNAPSecretsDir,
+			"SNAP_CHANNEL_ID":  c.SNAPChannelID,
 		} {
 			if v == "" {
 				errs = append(errs, key+" is required when SNAP_BASE_URL is set")

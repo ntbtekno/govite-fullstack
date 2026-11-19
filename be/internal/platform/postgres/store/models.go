@@ -7,6 +7,8 @@ package store
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Announcement struct {
@@ -179,6 +181,30 @@ type UserTwoFactor struct {
 	EnabledAt       *time.Time
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
+}
+
+type VaRequest struct {
+	ID                 string
+	MitraID            string
+	CustomerNo         string
+	TrxID              string
+	VirtualAccountName string
+	RequestedVa        string
+	ResponseVa         *string
+	ExternalID         string
+	Amount             pgtype.Numeric
+	Currency           string
+	VaType             string
+	ExpiredAt          time.Time
+	Description        *string
+	Phone              *string
+	ResponseCode       *string
+	ResponseMessage    *string
+	GatewayStatus      string
+	GatewayReference   *string
+	AttemptedAt        time.Time
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 type WebhookEvent struct {

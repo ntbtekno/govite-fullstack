@@ -50,6 +50,11 @@ var (
 	ErrTokenSignatureRejected = kernel.E(kernel.Unauthenticated, "VA_TOKEN_SIGNATURE_REJECTED", "Signature RSA token ditolak gateway")
 	// ErrNotConfigured is returned when the feature is off (SNAP_BASE_URL empty).
 	ErrNotConfigured = kernel.E(kernel.Unavailable, "VA_NOT_CONFIGURED", "Gateway SNAP belum dikonfigurasi")
+	// ErrCredentialsUnavailable is scoped to one mitra. A missing or malformed
+	// bundle must not prevent other mitra or the process itself from operating.
+	ErrCredentialsUnavailable = kernel.E(kernel.Unavailable, "VA_CREDENTIALS_UNAVAILABLE", "Kredensial SNAP mitra tidak tersedia")
+	ErrMitraRequired          = kernel.E(kernel.Forbidden, "VA_MITRA_REQUIRED", "Pembuatan VA hanya tersedia untuk pengguna mitra")
+	ErrTrxIDTaken             = kernel.E(kernel.Conflict, "VA_TRX_ID_TAKEN", "trxId sudah digunakan oleh mitra")
 )
 
 // Code returns the gateway error code carried by err, or "" when err is not a
@@ -72,8 +77,9 @@ type RetryableError struct {
 	RetryIn time.Duration
 }
 
-func (e *RetryableError) Error() string { return e.Cause.Error() }
-func (e *RetryableError) Unwrap() error { return e.Cause }
+func (e *RetryableError) Error() string             { return e.Cause.Error() }
+func (e *RetryableError) Unwrap() error             { return e.Cause }
+func (e *RetryableError) RetryAfter() time.Duration { return e.RetryIn }
 
 // RateLimited builds a retryable error for a 429, honouring Retry-After when
 // the gateway sent it.
@@ -88,8 +94,12 @@ var ErrRateLimited = kernel.E(kernel.Unavailable, "VA_RATE_LIMITED", "Batas laju
 // CreateRequest is one VA to create. It is the portal's business input; the
 // client turns it into the exact gateway body (fill left-pad, minify, sign).
 type CreateRequest struct {
+	// MitraKode selects the caller-owned credential bundle. It is resolved from
+	// the authenticated principal, never accepted from portal input.
+	MitraKode string
 	// PartnerServiceID is per mitra: the caller derives it from the mitra kode.
 	PartnerServiceID   string
+	ExternalID         string
 	CustomerNo         string
 	VirtualAccountName string
 	TrxID              string
@@ -102,6 +112,13 @@ type CreateRequest struct {
 	ExpiredDate time.Time
 	Description string
 	Phone       string
+}
+
+type InquiryRequest struct {
+	MitraKode        string
+	PartnerServiceID string
+	CustomerNo       string
+	TrxID            string
 }
 
 // CreateResult is the validated success shape. Success is 2002700 with status
@@ -117,12 +134,37 @@ type CreateResult struct {
 	Raw              []byte
 }
 
+type Request struct {
+	ID, MitraID, CustomerNo, TrxID, VirtualAccountName string
+	RequestedVA, ExternalID, Amount, Currency, TrxType string
+	ExpiredAt                                          time.Time
+	Description, Phone                                 string
+	GatewayStatus                                      string
+	AttemptedAt                                        time.Time
+}
+
+type PortalResult struct {
+	ID               string `json:"id"`
+	TrxID            string `json:"trxId"`
+	CustomerNo       string `json:"customerNo"`
+	VirtualAccountNo string `json:"virtualAccountNo"`
+	Status           string `json:"status"`
+	ReferenceNo      string `json:"referenceNo,omitempty"`
+}
+
+type Repository interface {
+	MitraKode(ctx context.Context, mitraID string) (string, error)
+	Insert(ctx context.Context, request Request) error
+	SaveResult(ctx context.Context, id, responseVA, responseCode, responseMessage, status, reference string, attemptedAt time.Time) error
+}
+
 // Gateway is the port application uses. The infrastructure package implements
 // it against the SNAP HTTP API; tests implement it as a fake.
 type Gateway interface {
 	// CreateVA creates one VA. The request is signed and sent as-is; a non
 	// 2002700/ACTIVE answer becomes a typed error (see the package errors).
 	CreateVA(ctx context.Context, req CreateRequest) (CreateResult, error)
+	InquiryVA(ctx context.Context, req InquiryRequest) (CreateResult, error)
 	// Enabled reports whether the gateway is configured.
 	Enabled() bool
 }

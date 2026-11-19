@@ -7,7 +7,7 @@ const password = process.env.SUPER_ADMIN_PASSWORD ?? "Smoke12345!"
 // The API runs with a pinned captcha code (E2E_CAPTCHA_CODE) so a headless
 // browser can sign in; production never sets it.
 const captcha = process.env.E2E_CAPTCHA_CODE ?? "ABCDE"
-const mitraKode = process.env.E2E_MITRA_KODE ?? "MTR-E2E"
+const mitraKode = process.env.E2E_MITRA_KODE ?? "010"
 const mitraUsername = process.env.E2E_MITRA_USERNAME ?? "e2e-mitra"
 const mitraPassword = process.env.E2E_MITRA_PASSWORD ?? "E2eMitra123!"
 
@@ -1379,9 +1379,9 @@ test("mitra dashboard refetch on Terapkan keeps bars visible and shows updating 
   expect(problems).toEqual([])
 })
 
-// Mitra admin (MITRA_ADMIN) sees the Tools group and can open Create VA;
-// the page is blank: only the "Create VA" header, no form/API.
-test("mitra admin opens Create VA from Tools group (blank page, header only)", async ({
+// Mitra admin creates one VA through the manual form. The gateway itself is
+// faked by scripts/e2e.sh; this remains a full browser -> portal API flow.
+test("mitra admin creates VA and sees the official number", async ({
   page,
 }) => {
   const problems = watch(page)
@@ -1392,10 +1392,18 @@ test("mitra admin opens Create VA from Tools group (blank page, header only)", a
   await page.getByRole("link", { name: "Create VA" }).click()
   await expect(page).toHaveURL(/\/admin\/tools\/create-va/)
 
-  // Blank page: only the header, no form/API-driven content.
   await expect(page.getByRole("heading", { name: "Create VA" })).toBeVisible()
-  await expect(page.locator("form")).toHaveCount(0)
-  await expect(page.locator("input")).toHaveCount(0)
+  await page.getByLabel("Nomor pelanggan").fill("123")
+  await page.getByLabel("ID transaksi").fill(`E2E-${Date.now()}`)
+  await page.getByLabel("Nama pemilik VA").fill("E2E Portal")
+  await page.getByLabel("Nominal").fill("150000.00")
+  const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000)
+  await page.getByLabel("Kedaluwarsa").fill(tomorrow.toISOString().slice(0, 16))
+  await page.getByLabel("Deskripsi").fill("Tagihan E2E")
+  await page.getByRole("button", { name: "Buat VA" }).click()
+  await expect(page.getByText("Virtual Account berhasil dibuat")).toBeVisible()
+  await expect(page.getByText("0104100000000000123")).toBeVisible()
+  await expect(page.getByText("ACTIVE", { exact: true })).toBeVisible()
 
   expect(problems).toEqual([])
 })

@@ -73,7 +73,7 @@ func setupWith(t *testing.T, capStore authdomain.CaptchaStore, image authdomain.
 	if err := postgres.Migrate(ctx, pool, "up"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `TRUNCATE role, permission, "user", audit_log, app_setting, notification, announcement, webhook_event, api_key, attachment, fcm_device, mitra CASCADE`); err != nil {
+	if _, err := pool.Exec(ctx, `TRUNCATE role, permission, "user", audit_log, app_setting, notification, announcement, webhook_event, api_key, attachment, fcm_device, va_requests, mitra CASCADE`); err != nil {
 		t.Fatal(err)
 	}
 	m := &mail.Memory{}
@@ -115,7 +115,7 @@ func setupWithThrottle(t *testing.T, globalLimit int) *env {
 	if err := postgres.Migrate(ctx, pool, "up"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `TRUNCATE role, permission, "user", audit_log, app_setting, notification, announcement, webhook_event, api_key, attachment, fcm_device, mitra CASCADE`); err != nil {
+	if _, err := pool.Exec(ctx, `TRUNCATE role, permission, "user", audit_log, app_setting, notification, announcement, webhook_event, api_key, attachment, fcm_device, va_requests, mitra CASCADE`); err != nil {
 		t.Fatal(err)
 	}
 	m := &mail.Memory{}

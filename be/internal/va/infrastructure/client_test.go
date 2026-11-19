@@ -14,6 +14,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -103,6 +105,7 @@ func newClientFor(t *testing.T, f *fakeGateway, key *rsa.PrivateKey) *Client {
 // sampleRequest is a valid Create VA request for tests.
 func sampleRequest() vadomain.CreateRequest {
 	return vadomain.CreateRequest{
+		MitraKode:          "010",
 		PartnerServiceID:   "010",
 		CustomerNo:         "20261023000001",
 		VirtualAccountName: "Budi Santoso",
@@ -130,34 +133,14 @@ func TestNewDisabledWhenBaseURLEmpty(t *testing.T) {
 	}
 }
 
-// TestNewFailsOnMissingSecretFile proves a configured gateway with an
-// unreadable secret file fails construction (boot fails), not the first call.
-func TestNewFailsOnMissingSecretFile(t *testing.T) {
+// TestNewOnlyValidatesSecretsRoot proves bundle failures are isolated to the
+// mitra request while an unreadable root still fails boot.
+func TestNewOnlyValidatesSecretsRoot(t *testing.T) {
 	key := newTestKey(t)
 	cfg := testConfig(t, "http://127.0.0.1:8080", key)
-	cfg.HMACSecretFile = "/nonexistent/path/to/secret"
+	cfg.SecretsDir = "/nonexistent/path/to/secrets"
 	if _, err := New(cfg); err == nil {
-		t.Fatal("missing HMAC secret file must fail construction")
-	}
-
-	cfg = testConfig(t, "http://127.0.0.1:8080", key)
-	cfg.RSAPrivateKeyFile = "/nonexistent/path/to/key"
-	if _, err := New(cfg); err == nil {
-		t.Fatal("missing RSA key file must fail construction")
-	}
-
-	// Empty secret file content fails too.
-	cfg = testConfig(t, "http://127.0.0.1:8080", key)
-	cfg.HMACSecretFile = writeTempSecret(t, "   \n")
-	if _, err := New(cfg); err == nil {
-		t.Fatal("blank HMAC secret file must fail construction")
-	}
-
-	// Invalid PEM fails too.
-	cfg = testConfig(t, "http://127.0.0.1:8080", key)
-	cfg.RSAPrivateKeyFile = writeTempSecret(t, "not a pem")
-	if _, err := New(cfg); err == nil {
-		t.Fatal("invalid RSA PEM must fail construction")
+		t.Fatal("missing secrets root must fail construction")
 	}
 }
 
@@ -170,7 +153,11 @@ func TestTokenSignatureIsSHA256WithRSA(t *testing.T) {
 	c := newClientFor(t, f, key)
 	c.now = func() string { return "2026-11-12T16:20:00+08:00" }
 
-	sig, err := c.rsaTokenSignature(tokenStringToSign("010", "2026-11-12T16:20:00+08:00"))
+	bundle, err := c.bundle("010")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig, err := rsaTokenSignature(bundle.privateKey, tokenStringToSign("010", "2026-11-12T16:20:00+08:00"))
 	if err != nil {
 		t.Fatalf("rsaTokenSignature: %v", err)
 	}
@@ -274,14 +261,71 @@ func TestTokenCacheReuseAndRefresh(t *testing.T) {
 	}
 
 	// Force expiry: pretend the cached token is within the skew window.
-	c.mu.Lock()
-	c.expiresAt = time.Now().Add(30 * time.Second)
-	c.mu.Unlock()
+	bundle, err := c.bundle("010")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle.mu.Lock()
+	bundle.expiresAt = time.Now().Add(30 * time.Second)
+	bundle.mu.Unlock()
 	if _, err := c.CreateVA(context.Background(), sampleRequest()); err != nil {
 		t.Fatalf("third CreateVA: %v", err)
 	}
 	if got := f.tokenCalls.Load(); got != 2 {
 		t.Fatalf("token calls = %d, want 2 (token must refresh inside the skew)", got)
+	}
+}
+
+func TestTokenCacheIsSeparatePerMitra(t *testing.T) {
+	key := newTestKey(t)
+	f := newFakeGateway(t)
+	f.createResponse = successResponse
+	cfg := testConfig(t, f.URL, key)
+	second := filepath.Join(cfg.SecretsDir, "011")
+	if err := os.Mkdir(second, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string]string{
+		"partner.json": `{"partnerId":"579","clientId":"011"}`,
+		"hmac.secret":  testHMACSecret + "-011",
+		"private.pem":  pemFor(key),
+	} {
+		if err := os.WriteFile(filepath.Join(second, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, b := sampleRequest(), sampleRequest()
+	b.MitraKode = "011"
+	if _, err := c.CreateVA(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.CreateVA(context.Background(), b); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.CreateVA(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.tokenCalls.Load(); got != 2 {
+		t.Fatalf("token calls = %d, want one per mitra", got)
+	}
+}
+
+func TestMissingMitraBundleReturnsUnavailable(t *testing.T) {
+	key := newTestKey(t)
+	f := newFakeGateway(t)
+	c := newClientFor(t, f, key)
+	req := sampleRequest()
+	req.MitraKode = "999"
+	_, err := c.CreateVA(context.Background(), req)
+	if got := vadomain.Code(err); got != vadomain.ErrCredentialsUnavailable.Code {
+		t.Fatalf("code = %q, want %q", got, vadomain.ErrCredentialsUnavailable.Code)
+	}
+	if f.tokenCalls.Load() != 0 || f.createCalls.Load() != 0 {
+		t.Fatal("missing bundle must not call gateway")
 	}
 }
 
@@ -353,6 +397,9 @@ func TestRateLimitedIsRetryable(t *testing.T) {
 	}
 	if got := vadomain.Code(err); got != vadomain.ErrRateLimited.Code {
 		t.Fatalf("retryable code = %q, want %q", got, vadomain.ErrRateLimited.Code)
+	}
+	if re.RetryIn != 5*time.Second {
+		t.Fatalf("RetryIn = %v, want 5s", re.RetryIn)
 	}
 }
 

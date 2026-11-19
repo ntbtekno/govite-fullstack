@@ -46,17 +46,24 @@ func writeTempSecret(t *testing.T, content string) string {
 	return path
 }
 
-// testConfig builds a Config wired to a temp HMAC secret file and an RSA key
-// file, using a caller-supplied base URL.
+// testConfig builds a Config wired to a test-only per-mitra bundle.
 func testConfig(t *testing.T, baseURL string, key *rsa.PrivateKey) Config {
 	t.Helper()
+	dir := t.TempDir()
+	mitraDir := filepath.Join(dir, "010")
+	if err := os.Mkdir(mitraDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mitraDir, "partner.json"), []byte(`{"partnerId":"578","clientId":"010"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mitraDir, "hmac.secret"), []byte(testHMACSecret), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mitraDir, "private.pem"), []byte(pemFor(key)), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	return Config{
-		BaseURL:           baseURL,
-		PartnerID:         "578",
-		ClientID:          "010",
-		ChannelID:         "02030",
-		Origin:            "",
-		HMACSecretFile:    writeTempSecret(t, testHMACSecret),
-		RSAPrivateKeyFile: writeTempSecret(t, pemFor(key)),
+		BaseURL: baseURL, SecretsDir: dir, ChannelID: "02030", Origin: "",
 	}
 }

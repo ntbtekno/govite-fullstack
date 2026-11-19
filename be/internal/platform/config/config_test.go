@@ -114,17 +114,14 @@ func TestSNAPRequiresFieldsWhenBaseURLSet(t *testing.T) {
 	// Only BaseURL set: every dependent field is missing.
 	setBaseEnv(t)
 	t.Setenv("SNAP_BASE_URL", "http://127.0.0.1:8080")
-	t.Setenv("SNAP_PARTNER_ID", "")
-	t.Setenv("SNAP_CLIENT_ID", "")
 	t.Setenv("SNAP_CHANNEL_ID", "")
-	t.Setenv("SNAP_HMAC_SECRET_FILE", "")
-	t.Setenv("SNAP_RSA_PRIVATE_KEY_FILE", "")
+	t.Setenv("SNAP_SECRETS_DIR", "")
 
 	_, err := Load()
 	if err == nil {
 		t.Fatal("a half-configured SNAP gateway must fail the boot")
 	}
-	for _, key := range []string{"SNAP_PARTNER_ID", "SNAP_CLIENT_ID", "SNAP_CHANNEL_ID", "SNAP_HMAC_SECRET_FILE", "SNAP_RSA_PRIVATE_KEY_FILE"} {
+	for _, key := range []string{"SNAP_SECRETS_DIR", "SNAP_CHANNEL_ID"} {
 		if !strings.Contains(err.Error(), key) {
 			t.Fatalf("boot error must name %s, got %v", key, err)
 		}
@@ -134,11 +131,8 @@ func TestSNAPRequiresFieldsWhenBaseURLSet(t *testing.T) {
 	// client reads and validates them at construction.
 	setBaseEnv(t)
 	t.Setenv("SNAP_BASE_URL", "http://127.0.0.1:8080")
-	t.Setenv("SNAP_PARTNER_ID", "578")
-	t.Setenv("SNAP_CLIENT_ID", "010")
 	t.Setenv("SNAP_CHANNEL_ID", "02030")
-	t.Setenv("SNAP_HMAC_SECRET_FILE", "/tmp/hmac")
-	t.Setenv("SNAP_RSA_PRIVATE_KEY_FILE", "/tmp/key")
+	t.Setenv("SNAP_SECRETS_DIR", "/tmp/snap-secrets")
 	t.Setenv("SNAP_ORIGIN", "")
 
 	cfg, err := Load()
@@ -155,11 +149,8 @@ func TestSNAPRequiresFieldsWhenBaseURLSet(t *testing.T) {
 func TestSNAPBaseURLTrailingSlashTrimmed(t *testing.T) {
 	setBaseEnv(t)
 	t.Setenv("SNAP_BASE_URL", "http://127.0.0.1:8080/")
-	t.Setenv("SNAP_PARTNER_ID", "578")
-	t.Setenv("SNAP_CLIENT_ID", "010")
 	t.Setenv("SNAP_CHANNEL_ID", "02030")
-	t.Setenv("SNAP_HMAC_SECRET_FILE", "/tmp/hmac")
-	t.Setenv("SNAP_RSA_PRIVATE_KEY_FILE", "/tmp/key")
+	t.Setenv("SNAP_SECRETS_DIR", "/tmp/snap-secrets")
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)

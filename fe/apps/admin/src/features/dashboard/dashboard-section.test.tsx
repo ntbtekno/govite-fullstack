@@ -53,6 +53,8 @@ const defaultProps = {
   onApply: vi.fn(),
   onReset: vi.fn(),
   lastSync: null,
+  isLoading: false,
+  isRefetching: false,
 }
 
 afterEach(() => {
@@ -68,8 +70,6 @@ describe("DashboardSection layout", () => {
       <DashboardSection
         lastLogin={lastLogin}
         monthly={monthly}
-        isLoading={false}
-        isRefetching={false}
         {...defaultProps}
       />
     )
@@ -94,8 +94,6 @@ describe("DashboardSection layout", () => {
       <DashboardSection
         lastLogin={lastLogin}
         monthly={null}
-        isLoading={false}
-        isRefetching={false}
         {...defaultProps}
       />
     )

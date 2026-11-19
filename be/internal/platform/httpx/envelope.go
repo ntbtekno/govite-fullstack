@@ -93,6 +93,21 @@ var messageInd = map[string]string{
 	"INVALID_TWO_FACTOR_CODE":      "Kode verifikasi dua langkah salah",
 	"STORAGE_UNAVAILABLE":          "Penyimpanan file belum dikonfigurasi",
 	"REPORTS_UNAVAILABLE":          "Laporan belum dikonfigurasi",
+	"VA_NOT_CONFIGURED":            "Gateway VA belum dikonfigurasi",
+	"VA_CREDENTIALS_UNAVAILABLE":   "Kredensial gateway VA mitra tidak tersedia",
+	"VA_MITRA_REQUIRED":            "Pembuatan VA hanya tersedia untuk pengguna mitra",
+	"VA_TRX_ID_TAKEN":              "trxId sudah digunakan oleh mitra",
+	"VA_FORMAT_INVALID":            "Format data VA ditolak gateway",
+	"VA_MANDATORY_INVALID":         "Data wajib VA tidak valid",
+	"VA_ALREADY_PAID":              "VA untuk trxId ini sudah dibayar",
+	"VA_ALREADY_ACTIVE":            "VA untuk trxId ini masih aktif",
+	"VA_GATEWAY_ERROR":             "Gateway VA gagal memproses permintaan",
+	"VA_RATE_LIMITED":              "Batas laju gateway VA terlampaui",
+	"VA_PARTNER_TOKEN_MISMATCH":    "Token gateway tidak cocok dengan mitra",
+	"VA_SIGNATURE_INVALID":         "Autentikasi gateway tidak valid",
+	"VA_UNEXPECTED_CODE":           "Gateway memberi respons yang tidak dikenal",
+	"VA_TOKEN_REQUEST_FAILED":      "Permintaan token gateway gagal",
+	"VA_TOKEN_SIGNATURE_REJECTED":  "Autentikasi token gateway ditolak",
 }
 
 func statusName(code int) string {

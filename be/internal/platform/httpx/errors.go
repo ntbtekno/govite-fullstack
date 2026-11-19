@@ -3,7 +3,9 @@ package httpx
 import (
 	"errors"
 	"log/slog"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/getsentry/sentry-go"
 	"github.com/gofiber/fiber/v2"
@@ -63,13 +65,24 @@ func IsUnique(err error, on string) bool {
 // answered as a generic 500, never leaking internals.
 func ErrorHandler(c *fiber.Ctx, err error) error {
 	var (
-		de *Error
-		ke *kernel.Error
-		fe *fiber.Error
-		pg *pgconn.PgError
+		de        *Error
+		ke        *kernel.Error
+		fe        *fiber.Error
+		pg        *pgconn.PgError
+		retryable interface{ RetryAfter() time.Duration }
 	)
 	switch {
 	case errors.As(err, &de):
+	case errors.As(err, &retryable):
+		de = &Error{Status: fiber.StatusTooManyRequests, Code: "VA_RATE_LIMITED", Message: "Batas laju gateway terlampaui"}
+		if wait := retryable.RetryAfter(); wait > 0 {
+			seconds := int64(wait / time.Second)
+			if seconds < 1 {
+				seconds = 1
+			}
+			c.Set(fiber.HeaderRetryAfter, strconv.FormatInt(seconds, 10))
+			de.Detail = "Coba lagi setelah " + strconv.FormatInt(seconds, 10) + " detik"
+		}
 	case errors.As(err, &ke):
 		de = &Error{Status: kindStatus[ke.Kind], Code: ke.Code, Message: ke.Message, Detail: ke.Detail}
 		if de.Status == 0 {

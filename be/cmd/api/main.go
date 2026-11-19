@@ -140,16 +140,13 @@ func serve(ctx context.Context, cfg config.Config, pool *pgxpool.Pool) error {
 		d.Push = push
 	}
 
-	// SNAP Create VA gateway. Empty SNAP_BASE_URL disables it (nil client).
-	// When configured, a bad secret file or invalid RSA PEM fails the boot here.
+	// SNAP Create VA gateway. Per-mitra bundles are validated lazily; only an
+	// unreadable root directory fails boot.
 	if snap, err := snapinfra.New(snapinfra.Config{
-		BaseURL:           cfg.SNAPBaseURL,
-		PartnerID:         cfg.SNAPPartnerID,
-		ClientID:          cfg.SNAPClientID,
-		ChannelID:         cfg.SNAPChannelID,
-		Origin:            cfg.SNAPOrigin,
-		HMACSecretFile:    cfg.SNAPHMACSecretFile,
-		RSAPrivateKeyFile: cfg.SNAPRSAPrivateKeyFile,
+		BaseURL:    cfg.SNAPBaseURL,
+		SecretsDir: cfg.SNAPSecretsDir,
+		ChannelID:  cfg.SNAPChannelID,
+		Origin:     cfg.SNAPOrigin,
 	}); err != nil {
 		return fmt.Errorf("SNAP: %w", err)
 	} else if snap != nil {

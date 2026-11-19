@@ -58,7 +58,10 @@ import (
 	usersapp "govite/internal/users/application"
 	usersinfra "govite/internal/users/infrastructure"
 	usershttp "govite/internal/users/interface/http"
+	vaapp "govite/internal/va/application"
 	vadomain "govite/internal/va/domain"
+	vainfra "govite/internal/va/infrastructure"
+	vahttp "govite/internal/va/interface/http"
 )
 
 // Deps are the process-level adapters main builds once.
@@ -143,6 +146,7 @@ type handlers struct {
 	system        syshttp.Handler
 	mitra         mitrahttp.Handler
 	reports       reportshttp.Handler
+	va            vahttp.Handler
 }
 
 // captchaStoreOr picks an override, else Redis when configured, else the
@@ -238,5 +242,6 @@ func wire(d Deps) (handlers, *sysapp.Service) {
 		}},
 		mitra:   mitrahttp.Handler{Svc: mitra, Audit: auditor},
 		reports: reportshttp.Handler{Svc: reports},
+		va:      vahttp.Handler{Svc: &vaapp.Service{Repo: vainfra.Repository{DB: db}, Gateway: d.SNAP, Audit: auditor}},
 	}, system
 }
