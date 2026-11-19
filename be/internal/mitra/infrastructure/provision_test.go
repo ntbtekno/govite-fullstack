@@ -89,6 +89,13 @@ func TestProvisionerWritesBundleAndRegisters(t *testing.T) {
 	if res.PartnerID != "P-999" || res.ClientID != "101" {
 		t.Fatalf("unexpected result: %+v", res)
 	}
+	resultRaw, err := json.Marshal(res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(resultRaw), "hmac-secret-123") {
+		t.Fatal("provision result must not contain the client secret")
+	}
 
 	if received.BasicUser != "admin" || received.BasicPass != "pw" {
 		t.Fatalf("basic auth not forwarded: %q %q", received.BasicUser, received.BasicPass)
@@ -278,6 +285,49 @@ func TestProvisionerBundleWriteFailureKeepsPartnerIDAndNoPartialBundle(t *testin
 	}
 	if _, statErr := os.Stat(filepath.Join(secretsDir, "103", "partner.json")); !os.IsNotExist(statErr) {
 		t.Fatalf("partial bundle must not remain, stat error=%v", statErr)
+	}
+}
+
+func TestIncompleteBundleFile(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"partner.json", "hmac.secret", "private.pem"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := incompleteBundleFile(dir); got != "" {
+		t.Fatalf("complete bundle reported incomplete: %q", got)
+	}
+	if err := os.Truncate(filepath.Join(dir, "hmac.secret"), 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := incompleteBundleFile(dir); got != "hmac.secret" {
+		t.Fatalf("empty hmac.secret reported as %q", got)
+	}
+}
+
+func TestProvisionerRejectsIncompleteBundleAfterWrites(t *testing.T) {
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{"partnerId": "P-COMPLETE", "clientId": "106", "clientSecret": strings.Repeat("x", 8)})
+	}))
+	defer gateway.Close()
+	dir := t.TempDir()
+	p, err := NewProvisioner(Config{
+		BaseURL: gateway.URL, SecretsDir: dir, HTTPClient: gateway.Client(),
+		AtomicWrite: func(path string, data []byte) error {
+			if filepath.Base(path) == "hmac.secret" {
+				data = nil
+			}
+			return os.WriteFile(path, data, 0o600)
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = p.Provision(context.Background(), "106", domain.ProvisionInput{})
+	var pe *domain.ProvisionError
+	if !errors.As(err, &pe) || pe.PartnerID != "P-COMPLETE" || !strings.Contains(pe.Detail, "hmac.secret") {
+		t.Fatalf("expected incomplete bundle error, got %T %v", err, err)
 	}
 }
 

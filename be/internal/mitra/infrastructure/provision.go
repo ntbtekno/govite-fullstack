@@ -141,7 +141,26 @@ func (p *Provisioner) Provision(ctx context.Context, kode string, in domain.Prov
 	if err := write(filepath.Join(dir, "private.pem"), privatePEM); err != nil {
 		return domain.ProvisionResult{}, &domain.ProvisionError{PartnerID: partnerID, Detail: "write private.pem: " + err.Error(), Cause: domain.ErrProvisionFailed}
 	}
+	if missing := incompleteBundleFile(dir); missing != "" {
+		return domain.ProvisionResult{}, &domain.ProvisionError{
+			PartnerID: partnerID,
+			Detail:    fmt.Sprintf("bundle incomplete: %s missing or empty (partnerId %s)", missing, partnerID),
+			Cause:     domain.ErrProvisionFailed,
+		}
+	}
 	return domain.ProvisionResult{PartnerID: partnerID, ClientID: clientID}, nil
+}
+
+// incompleteBundleFile checks only metadata and size. It deliberately never
+// reads bundle contents, especially hmac.secret or private.pem.
+func incompleteBundleFile(dir string) string {
+	for _, name := range []string{"partner.json", "hmac.secret", "private.pem"} {
+		info, err := os.Stat(filepath.Join(dir, name))
+		if err != nil || info.Size() == 0 {
+			return name
+		}
+	}
+	return ""
 }
 
 func writeAtomic(path string, data []byte) error {

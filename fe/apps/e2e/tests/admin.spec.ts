@@ -1,4 +1,6 @@
 import { expect, test, type Page } from "@playwright/test"
+import { access, stat } from "node:fs/promises"
+import path from "node:path"
 
 // Needs a running API seeded with this user, whose role must not require 2FA
 // (scripts/e2e.sh sets that up).
@@ -161,6 +163,11 @@ test("superadmin creates a mitra with HTTPS callback and provisions its bundle",
   const created = responseBody
   expect(created.data.provisionStatus).toBe("READY")
   expect(created.data.bundlePath).toBeTruthy()
+  const bundleDir = path.join(process.env.E2E_SNAP_SECRETS_DIR ?? "", kode)
+  for (const file of ["partner.json", "hmac.secret", "private.pem"]) {
+    await access(path.join(bundleDir, file))
+    expect((await stat(path.join(bundleDir, file))).size).toBeGreaterThan(0)
+  }
   await expect(dialog).toBeHidden()
   await page.getByPlaceholder(/search/i).fill(kode)
   const row = page.getByRole("row", { name: new RegExp(kode) })
