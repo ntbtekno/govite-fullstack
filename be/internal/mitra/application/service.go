@@ -141,16 +141,20 @@ func validateCreate(in CreateInput) error {
 	}
 	if in.CallbackUrl != nil && *in.CallbackUrl != "" {
 		u, err := url.Parse(*in.CallbackUrl)
-		if err != nil || u.Scheme == "" {
-			return validation("callbackUrl: URL tidak valid")
+		if err != nil || u.Scheme != "https" || u.Host == "" {
+			return validation("callbackUrl: wajib URL HTTPS yang valid")
 		}
+	} else {
+		return validation("callbackUrl: wajib URL HTTPS yang valid")
 	}
 	if in.RateLimitTier != "standard" {
 		return validation("rateLimitTier: harus standard")
 	}
 	for _, ip := range in.IPWhitelist {
 		if net.ParseIP(ip) == nil {
-			return validation("ipWhitelist: harus berisi alamat IP tunggal, bukan CIDR")
+			if _, _, err := net.ParseCIDR(ip); err != nil {
+				return validation("ipWhitelist: harus berisi alamat IP atau CIDR yang valid")
+			}
 		}
 	}
 	return nil

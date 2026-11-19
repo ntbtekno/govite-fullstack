@@ -65,7 +65,7 @@ func (p fakeProv) Provision(context.Context, string, domain.ProvisionInput) (dom
 }
 
 func validCreateInput() CreateInput {
-	return CreateInput{KodeMitra: "103", Nama: "Repair", PartnerServiceID: "     103", VAPrefix: "10341", BranchCode: "1030", RateLimitTier: "standard"}
+	return CreateInput{KodeMitra: "103", Nama: "Repair", PartnerServiceID: "     103", VAPrefix: "10341", BranchCode: "1030", CallbackUrl: strPtr("https://example.com/callback"), RateLimitTier: "standard"}
 }
 
 func TestCreateRecordsNeedsRepairAfterBundleFailure(t *testing.T) {
@@ -103,11 +103,6 @@ func TestValidateCreateAcceptsCompleteInput(t *testing.T) {
 		t.Fatalf("valid input rejected: %v", err)
 	}
 
-	in.CallbackUrl = nil
-	if err := validateCreate(in); err != nil {
-		t.Fatalf("valid input without callback rejected: %v", err)
-	}
-
 	in.IPWhitelist = nil
 	if err := validateCreate(in); err != nil {
 		t.Fatalf("valid input without IP whitelist rejected: %v", err)
@@ -121,6 +116,7 @@ func TestValidateCreateRejectsBadInput(t *testing.T) {
 		PartnerServiceID: "     010",
 		VAPrefix:         "01041",
 		BranchCode:       "1010",
+		CallbackUrl:      strPtr("https://mitra.example.com/callback"),
 		RateLimitTier:    "standard",
 		IPWhitelist:      []string{"127.0.0.1"},
 	}
@@ -146,11 +142,17 @@ func TestValidateCreateRejectsBadInput(t *testing.T) {
 	reject(t, func() CreateInput { i := base; i.VAPrefix = "0104"; return i }(), "vaPrefix: harus kode mitra diikuti literal \"41\", mis. \"01041\"")
 	reject(t, func() CreateInput { i := base; i.BranchCode = " "; return i }(), "branchCode: wajib diisi")
 	reject(t, func() CreateInput { i := base; i.RateLimitTier = "premium"; return i }(), "rateLimitTier: harus standard")
-	reject(t, func() CreateInput { i := base; i.IPWhitelist = []string{"127.0.0.1/24"}; return i }(), "ipWhitelist: harus berisi alamat IP tunggal, bukan CIDR")
-	reject(t, func() CreateInput { i := base; i.IPWhitelist = []string{"not-an-ip"}; return i }(), "ipWhitelist: harus berisi alamat IP tunggal, bukan CIDR")
+	base.CallbackUrl = strPtr("https://mitra.example.com/callback")
+	if err := validateCreate(CreateInput{KodeMitra: "010", Nama: "Mitra", PartnerServiceID: "     010", VAPrefix: "01041", BranchCode: "001", CallbackUrl: strPtr("https://example.com/callback"), RateLimitTier: "standard", IPWhitelist: []string{"10.0.0.0/8"}}); err != nil {
+		t.Fatalf("CIDR rejected: %v", err)
+	}
+	reject(t, func() CreateInput { i := base; i.IPWhitelist = []string{"not-an-ip"}; return i }(), "ipWhitelist: harus berisi alamat IP atau CIDR yang valid")
 
 	badURL := "not-a-url"
-	reject(t, func() CreateInput { i := base; i.CallbackUrl = &badURL; return i }(), "callbackUrl: URL tidak valid")
+	reject(t, func() CreateInput { i := base; i.CallbackUrl = &badURL; return i }(), "callbackUrl: wajib URL HTTPS yang valid")
+	httpURL := "http://mitra.example.com/callback"
+	reject(t, func() CreateInput { i := base; i.CallbackUrl = &httpURL; return i }(), "callbackUrl: wajib URL HTTPS yang valid")
+	reject(t, func() CreateInput { i := base; i.CallbackUrl = nil; return i }(), "callbackUrl: wajib URL HTTPS yang valid")
 }
 
 func strPtr(s string) *string { return &s }

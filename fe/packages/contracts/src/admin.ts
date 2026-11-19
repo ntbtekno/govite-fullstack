@@ -357,7 +357,7 @@ export const CreateMitraRequestSchema = z.object({
   partnerServiceId: z.string().trim().min(1).max(8),
   vaPrefix: z.string().trim().min(1),
   branchCode: z.string().trim().min(1),
-  callbackUrl: z.string().trim().url().optional(),
+  callbackUrl: z.string().trim().url().refine((value) => value.startsWith("https://"), "Callback URL harus HTTPS"),
   rateLimitTier: z.string().min(1),
   ipWhitelist: z
     .array(
@@ -365,8 +365,8 @@ export const CreateMitraRequestSchema = z.object({
         .string()
         .trim()
         .regex(
-          /^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)$|^\[?[0-9a-fA-F:]+\]?$/,
-          "Harus alamat IP tunggal, bukan CIDR",
+          /^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\/(?:3[0-2]|[12]?\d))?$|^\[?[0-9a-fA-F:]+\]?(?:\/(?:12[0-8]|1[01]\d|[1-9]?\d))?$/,
+          "Harus alamat IP tunggal atau CIDR yang valid",
         ),
     )
     .default([]),

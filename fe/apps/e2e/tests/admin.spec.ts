@@ -137,6 +137,38 @@ test("create a user from the dialog", async ({ page }) => {
   expect(problems).toEqual([])
 })
 
+test("superadmin creates a mitra with HTTPS callback and provisions its bundle", async ({ page }) => {
+  const problems = watch(page)
+  await signIn(page)
+  await page.goto("/admin/administration/mitra")
+  await page.getByRole("button", { name: "Add mitra" }).click()
+  const dialog = page.getByRole("dialog", { name: "New mitra" })
+  const kode = String(Date.now()).slice(-3)
+  await dialog.getByLabel("Kode mitra").fill(kode)
+  await dialog.getByLabel("Nama mitra").fill("E2E Provisioned Mitra")
+  await dialog.getByLabel("Partner Service ID").fill(`     ${kode}`)
+  await dialog.getByLabel("VA Prefix").fill(`${kode}41`)
+  await dialog.getByLabel("Kode Cabang").fill("001")
+  await dialog.getByLabel("Callback URL").fill("https://example.com/callback")
+  await dialog.getByLabel("IP whitelist").fill("127.0.0.1")
+  const responsePromise = page.waitForResponse(
+    (response) => response.url().includes("/api/v1/mitra") && response.request().method() === "POST",
+  )
+  await dialog.getByRole("button", { name: "Create" }).click()
+  const response = await responsePromise
+  const responseBody = await response.json()
+  expect(response.ok(), JSON.stringify(responseBody)).toBe(true)
+  const created = responseBody
+  expect(created.data.provisionStatus).toBe("READY")
+  expect(created.data.bundlePath).toBeTruthy()
+  await expect(dialog).toBeHidden()
+  await page.getByPlaceholder(/search/i).fill(kode)
+  const row = page.getByRole("row", { name: new RegExp(kode) })
+  await expect(row).toBeVisible()
+  await expect(row).toContainText("Active")
+  expect(problems).toEqual([])
+})
+
 // Proves the permanent-delete dialog keeps the button disabled until the exact
 // username is typed, and that cancelling deletes nothing.
 test("delete user requires typing the username and cancel keeps the user", async ({

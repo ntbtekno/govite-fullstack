@@ -91,7 +91,7 @@ export function MitraPage() {
       partnerServiceId: String(form.get("partnerServiceId")),
       vaPrefix: String(form.get("vaPrefix")),
       branchCode: String(form.get("branchCode")),
-      callbackUrl: callbackUrl === "" ? undefined : callbackUrl,
+      callbackUrl,
       rateLimitTier: "standard",
       ipWhitelist,
     })
@@ -164,8 +164,11 @@ export function MitraPage() {
                   <Input id="branchCode" name="branchCode" required />
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="callbackUrl">Callback URL (opsional)</Label>
-                  <Input id="callbackUrl" name="callbackUrl" placeholder="https://mitra.example.com/callback" />
+                  <Label htmlFor="callbackUrl">Callback URL</Label>
+                  <Input id="callbackUrl" name="callbackUrl" type="url" required pattern="https://.*" placeholder="https://mitra.example.com/callback" />
+                  <span className="text-xs text-muted-foreground">
+                    Wajib diisi dengan URL HTTPS yang valid karena diperlukan gateway.
+                  </span>
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="rateLimitTier">Rate limit tier</Label>
@@ -175,7 +178,7 @@ export function MitraPage() {
                   <Label htmlFor="ipWhitelist">IP whitelist</Label>
                   <Input id="ipWhitelist" name="ipWhitelist" placeholder="1.2.3.4, 5.6.7.8" />
                   <span className="text-xs text-muted-foreground">
-                    Alamat IP tunggal dipisahkan koma, kosongkan kalau tidak ada.
+                    Alamat IP atau CIDR dipisahkan koma, kosongkan kalau tidak ada.
                   </span>
                 </div>
               </form>

@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -203,7 +204,7 @@ func (p *Provisioner) registerPartner(ctx context.Context, kode string, in domai
 		"rsaPublicKey":  string(publicKeyPEM),
 		"callbackUrl":   in.CallbackURL,
 		"rateLimitTier": in.RateLimitTier,
-		"ipWhitelist":   in.IPWhitelist,
+		"ipWhitelist":   strings.Join(in.IPWhitelist, ","),
 		"branchCode":    in.BranchCode,
 		"vaPrefix":      in.VAPrefix,
 	}
@@ -230,6 +231,14 @@ func (p *Provisioner) registerPartner(ctx context.Context, kode string, in domai
 		return "", "", nil, domain.ErrProvisionFailed.WithDetail("read register response: " + err.Error())
 	}
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		var gatewayErr struct {
+			ResponseCode    string `json:"responseCode"`
+			ResponseMessage string `json:"responseMessage"`
+		}
+		if json.Unmarshal(raw, &gatewayErr) == nil && (gatewayErr.ResponseCode != "" || gatewayErr.ResponseMessage != "") {
+			slog.ErrorContext(reqCtx, "gateway partner registration rejected", "status", res.StatusCode, "responseCode", gatewayErr.ResponseCode, "responseMessage", gatewayErr.ResponseMessage)
+			return "", "", nil, domain.ErrProvisionFailed.WithDetail(fmt.Sprintf("gateway responded %d (%s: %s)", res.StatusCode, gatewayErr.ResponseCode, gatewayErr.ResponseMessage))
+		}
 		return "", "", nil, domain.ErrProvisionFailed.WithDetail(fmt.Sprintf("gateway responded %d", res.StatusCode))
 	}
 

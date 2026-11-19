@@ -10,6 +10,13 @@ import (
 
 func main() {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/admin/v1/partners", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			ClientID string `json:"clientId"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		write(w, map[string]any{"partnerId": "e2e-provisioned", "clientId": body.ClientID, "clientSecret": "e2e-provisioning-secret"})
+	})
 	mux.HandleFunc("/api/v1.0/access-token/b2b", func(w http.ResponseWriter, _ *http.Request) {
 		write(w, map[string]any{"responseCode":"2007300","responseMessage":"Successful","accessToken":"e2e-token","tokenType":"Bearer","expiresIn":900})
 	})

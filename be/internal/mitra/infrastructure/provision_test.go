@@ -16,6 +16,7 @@ import (
 	"strings"
 	"testing"
 
+	"govite/internal/kernel"
 	"govite/internal/mitra/domain"
 )
 
@@ -102,8 +103,11 @@ func TestProvisionerWritesBundleAndRegisters(t *testing.T) {
 	if received.Body["clientId"] != "101" || received.Body["vaPrefix"] != "10141" {
 		t.Fatalf("unexpected body fields: %+v", received.Body)
 	}
-	if whitelist, _ := received.Body["ipWhitelist"].([]any); len(whitelist) != 1 || whitelist[0] != "127.0.0.1" {
+	if whitelist, _ := received.Body["ipWhitelist"].(string); whitelist != "127.0.0.1" {
 		t.Fatalf("ipWhitelist not forwarded: %+v", received.Body["ipWhitelist"])
+	}
+	if _, ok := received.Body["ipWhitelist"].([]any); ok {
+		t.Fatal("ipWhitelist must not be a JSON array")
 	}
 
 	dir := filepath.Join(secretsDir, "101")
@@ -170,6 +174,43 @@ func TestProvisionerWritesBundleAndRegisters(t *testing.T) {
 	priv, _ := x509.ParsePKCS8PrivateKey(block.Bytes)
 	if fmt.Sprint(pub) != fmt.Sprint(&priv.(*rsa.PrivateKey).PublicKey) {
 		t.Fatal("registered public key does not match bundled private key")
+	}
+}
+
+func TestProvisionerIncludesGatewayError(t *testing.T) {
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"responseCode":"4000500","responseMessage":"Malformed request body"}`)
+	}))
+	defer gateway.Close()
+	p, err := NewProvisioner(Config{BaseURL: gateway.URL, SecretsDir: t.TempDir(), HTTPClient: gateway.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = p.Provision(context.Background(), "104", domain.ProvisionInput{CallbackURL: "https://example.com/callback"})
+	var ke *kernel.Error
+	if err == nil || !errors.As(err, &ke) || !strings.Contains(ke.Detail, "4000500") || !strings.Contains(ke.Detail, "Malformed request body") {
+		t.Fatalf("gateway error not exposed: %v", err)
+	}
+}
+
+func TestProvisionerSendsEmptyWhitelistAsString(t *testing.T) {
+	var body map[string]any
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		_ = json.NewEncoder(w).Encode(map[string]string{"partnerId": "P", "clientId": "105", "clientSecret": "secret"})
+	}))
+	defer gateway.Close()
+	p, err := NewProvisioner(Config{BaseURL: gateway.URL, SecretsDir: t.TempDir(), HTTPClient: gateway.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Provision(context.Background(), "105", domain.ProvisionInput{CallbackURL: "https://example.com/callback"}); err != nil {
+		t.Fatal(err)
+	}
+	if value, ok := body["ipWhitelist"].(string); !ok || value != "" {
+		t.Fatalf("ipWhitelist = %#v, want empty string", body["ipWhitelist"])
 	}
 }
 
