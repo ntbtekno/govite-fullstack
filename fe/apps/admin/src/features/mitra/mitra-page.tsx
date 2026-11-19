@@ -73,7 +73,7 @@ export function MitraPage() {
     mutationFn: ({ id, isActive }: { id: string; isActive: boolean }) =>
       mitraApi.setActive(id, isActive),
     onSuccess: async (row) => {
-      toast.success(row.isActive ? "Mitra activated" : "Mitra deactivated")
+      toast.success(row.isActive ? "Mitra diaktifkan" : "Mitra dinonaktifkan")
       await invalidate()
     },
   })
@@ -81,9 +81,19 @@ export function MitraPage() {
   function onCreate(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
     const form = new FormData(e.currentTarget)
+    const ipRaw = String(form.get("ipWhitelist"))
+    const ipWhitelist =
+      ipRaw === "" ? [] : ipRaw.split(",").map((s) => s.trim()).filter((s) => s !== "")
+    const callbackUrl = String(form.get("callbackUrl"))
     create.mutate({
       kodeMitra: String(form.get("kodeMitra")),
       nama: String(form.get("nama")),
+      partnerServiceId: String(form.get("partnerServiceId")),
+      vaPrefix: String(form.get("vaPrefix")),
+      branchCode: String(form.get("branchCode")),
+      callbackUrl: callbackUrl === "" ? undefined : callbackUrl,
+      rateLimitTier: "standard",
+      ipWhitelist,
     })
   }
 
@@ -116,13 +126,57 @@ export function MitraPage() {
                   <Input
                     id="kodeMitra"
                     name="kodeMitra"
-                    placeholder="MTR-001"
+                    placeholder="010"
                     required
                   />
+                  <span className="text-xs text-muted-foreground">3 digit angka, unik.</span>
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="nama">Nama</Label>
+                  <Label htmlFor="nama">Nama mitra</Label>
                   <Input id="nama" name="nama" required />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="partnerServiceId">Partner Service ID</Label>
+                  <Input
+                    id="partnerServiceId"
+                    name="partnerServiceId"
+                    placeholder="     010"
+                    required
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    8 karakter, kode mitra left-pad spasi, mis.{"     010"}
+                  </span>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="vaPrefix">VA Prefix</Label>
+                  <Input
+                    id="vaPrefix"
+                    name="vaPrefix"
+                    placeholder="01041"
+                    required
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    Kode mitra diikuti{"41"}, mis.{"01041"}
+                  </span>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="branchCode">Kode Cabang</Label>
+                  <Input id="branchCode" name="branchCode" required />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="callbackUrl">Callback URL (opsional)</Label>
+                  <Input id="callbackUrl" name="callbackUrl" placeholder="https://mitra.example.com/callback" />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="rateLimitTier">Rate limit tier</Label>
+                  <Input id="rateLimitTier" name="rateLimitTier" value="standard" readOnly />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="ipWhitelist">IP whitelist</Label>
+                  <Input id="ipWhitelist" name="ipWhitelist" placeholder="1.2.3.4, 5.6.7.8" />
+                  <span className="text-xs text-muted-foreground">
+                    Alamat IP tunggal dipisahkan koma, kosongkan kalau tidak ada.
+                  </span>
                 </div>
               </form>
               <DialogFooter>

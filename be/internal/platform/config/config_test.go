@@ -116,12 +116,14 @@ func TestSNAPRequiresFieldsWhenBaseURLSet(t *testing.T) {
 	t.Setenv("SNAP_BASE_URL", "http://127.0.0.1:8080")
 	t.Setenv("SNAP_CHANNEL_ID", "")
 	t.Setenv("SNAP_SECRETS_DIR", "")
+	t.Setenv("SNAP_ADMIN_USERNAME", "")
+	t.Setenv("SNAP_ADMIN_PASSWORD", "")
 
 	_, err := Load()
 	if err == nil {
 		t.Fatal("a half-configured SNAP gateway must fail the boot")
 	}
-	for _, key := range []string{"SNAP_SECRETS_DIR", "SNAP_CHANNEL_ID"} {
+	for _, key := range []string{"SNAP_SECRETS_DIR", "SNAP_CHANNEL_ID", "SNAP_ADMIN_USERNAME", "SNAP_ADMIN_PASSWORD"} {
 		if !strings.Contains(err.Error(), key) {
 			t.Fatalf("boot error must name %s, got %v", key, err)
 		}
@@ -133,6 +135,8 @@ func TestSNAPRequiresFieldsWhenBaseURLSet(t *testing.T) {
 	t.Setenv("SNAP_BASE_URL", "http://127.0.0.1:8080")
 	t.Setenv("SNAP_CHANNEL_ID", "02030")
 	t.Setenv("SNAP_SECRETS_DIR", "/tmp/snap-secrets")
+	t.Setenv("SNAP_ADMIN_USERNAME", "snap-admin")
+	t.Setenv("SNAP_ADMIN_PASSWORD", "snap-admin-secret")
 	t.Setenv("SNAP_ORIGIN", "")
 
 	cfg, err := Load()
@@ -151,6 +155,8 @@ func TestSNAPBaseURLTrailingSlashTrimmed(t *testing.T) {
 	t.Setenv("SNAP_BASE_URL", "http://127.0.0.1:8080/")
 	t.Setenv("SNAP_CHANNEL_ID", "02030")
 	t.Setenv("SNAP_SECRETS_DIR", "/tmp/snap-secrets")
+	t.Setenv("SNAP_ADMIN_USERNAME", "snap-admin")
+	t.Setenv("SNAP_ADMIN_PASSWORD", "snap-admin-secret")
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)

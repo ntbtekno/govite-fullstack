@@ -22,14 +22,21 @@ func (q *Queries) CountMitra(ctx context.Context, search *string) (int64, error)
 }
 
 const createMitra = `-- name: CreateMitra :exec
-INSERT INTO "mitra" (id, kode_mitra, nama, is_active) VALUES ($1, $2, $3, $4)
+INSERT INTO "mitra" (id, kode_mitra, nama, is_active, partner_service_id, va_prefix, bundle_path, provision_status, provision_partner_id, provision_error)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 `
 
 type CreateMitraParams struct {
-	ID        string
-	KodeMitra string
-	Nama      string
-	IsActive  bool
+	ID                 string
+	KodeMitra          string
+	Nama               string
+	IsActive           bool
+	PartnerServiceID   string
+	VaPrefix           string
+	BundlePath         string
+	ProvisionStatus    string
+	ProvisionPartnerID *string
+	ProvisionError     *string
 }
 
 func (q *Queries) CreateMitra(ctx context.Context, arg CreateMitraParams) error {
@@ -38,12 +45,18 @@ func (q *Queries) CreateMitra(ctx context.Context, arg CreateMitraParams) error 
 		arg.KodeMitra,
 		arg.Nama,
 		arg.IsActive,
+		arg.PartnerServiceID,
+		arg.VaPrefix,
+		arg.BundlePath,
+		arg.ProvisionStatus,
+		arg.ProvisionPartnerID,
+		arg.ProvisionError,
 	)
 	return err
 }
 
 const getMitraByID = `-- name: GetMitraByID :one
-SELECT id, kode_mitra, nama, is_active, created_at FROM "mitra" WHERE id = $1
+SELECT id, kode_mitra, nama, is_active, created_at, partner_service_id, va_prefix, bundle_path, provision_status, provision_partner_id, provision_error FROM "mitra" WHERE id = $1
 `
 
 func (q *Queries) GetMitraByID(ctx context.Context, id string) (Mitra, error) {
@@ -55,12 +68,18 @@ func (q *Queries) GetMitraByID(ctx context.Context, id string) (Mitra, error) {
 		&i.Nama,
 		&i.IsActive,
 		&i.CreatedAt,
+		&i.PartnerServiceID,
+		&i.VaPrefix,
+		&i.BundlePath,
+		&i.ProvisionStatus,
+		&i.ProvisionPartnerID,
+		&i.ProvisionError,
 	)
 	return i, err
 }
 
 const getMitraByKode = `-- name: GetMitraByKode :one
-SELECT id, kode_mitra, nama, is_active, created_at FROM "mitra" WHERE kode_mitra = $1
+SELECT id, kode_mitra, nama, is_active, created_at, partner_service_id, va_prefix, bundle_path, provision_status, provision_partner_id, provision_error FROM "mitra" WHERE kode_mitra = $1
 `
 
 func (q *Queries) GetMitraByKode(ctx context.Context, kodeMitra string) (Mitra, error) {
@@ -72,12 +91,18 @@ func (q *Queries) GetMitraByKode(ctx context.Context, kodeMitra string) (Mitra, 
 		&i.Nama,
 		&i.IsActive,
 		&i.CreatedAt,
+		&i.PartnerServiceID,
+		&i.VaPrefix,
+		&i.BundlePath,
+		&i.ProvisionStatus,
+		&i.ProvisionPartnerID,
+		&i.ProvisionError,
 	)
 	return i, err
 }
 
 const listMitra = `-- name: ListMitra :many
-SELECT id, kode_mitra, nama, is_active, created_at FROM "mitra"
+SELECT id, kode_mitra, nama, is_active, created_at, partner_service_id, va_prefix, bundle_path, provision_status, provision_partner_id, provision_error FROM "mitra"
 WHERE ($1::text IS NULL OR nama ILIKE '%' || $1 || '%' OR kode_mitra ILIKE '%' || $1 || '%')
 ORDER BY created_at DESC
 LIMIT $3 OFFSET $2
@@ -104,6 +129,12 @@ func (q *Queries) ListMitra(ctx context.Context, arg ListMitraParams) ([]Mitra, 
 			&i.Nama,
 			&i.IsActive,
 			&i.CreatedAt,
+			&i.PartnerServiceID,
+			&i.VaPrefix,
+			&i.BundlePath,
+			&i.ProvisionStatus,
+			&i.ProvisionPartnerID,
+			&i.ProvisionError,
 		); err != nil {
 			return nil, err
 		}
@@ -113,6 +144,23 @@ func (q *Queries) ListMitra(ctx context.Context, arg ListMitraParams) ([]Mitra, 
 		return nil, err
 	}
 	return items, nil
+}
+
+const markMitraNeedsRepair = `-- name: MarkMitraNeedsRepair :exec
+UPDATE "mitra"
+SET provision_status = 'NEEDS_REPAIR', provision_partner_id = $2, provision_error = $3
+WHERE id = $1
+`
+
+type MarkMitraNeedsRepairParams struct {
+	ID                 string
+	ProvisionPartnerID *string
+	ProvisionError     *string
+}
+
+func (q *Queries) MarkMitraNeedsRepair(ctx context.Context, arg MarkMitraNeedsRepairParams) error {
+	_, err := q.db.Exec(ctx, markMitraNeedsRepair, arg.ID, arg.ProvisionPartnerID, arg.ProvisionError)
+	return err
 }
 
 const setMitraActive = `-- name: SetMitraActive :exec

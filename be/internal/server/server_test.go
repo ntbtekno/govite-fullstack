@@ -7,9 +7,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha512"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"io"
 	"maps"
 	"mime/multipart"
@@ -28,6 +30,7 @@ import (
 
 	authdomain "govite/internal/auth/domain"
 	"govite/internal/kernel"
+	mitrainfra "govite/internal/mitra/infrastructure"
 	"govite/internal/platform/config"
 	"govite/internal/platform/crypto"
 	"govite/internal/platform/fcm"
@@ -137,6 +140,84 @@ func setupWithThrottle(t *testing.T, globalLimit int) *env {
 	return &env{t, f, store.New(pool), pool, m, push, logsDir}
 }
 
+// setupWithSNAP is like setup, but wires a mitra provisioner against a fake
+// gateway (httptest) and a temp secrets dir, so mitra creation auto-provisions
+// a bundle. cap, when non-nil, receives the last registration request body and
+// Basic auth header.
+func setupWithSNAP(t *testing.T, cap *struct {
+	body map[string]any
+	auth string
+}) (*env, *httptest.Server, string) {
+	t.Helper()
+	url := os.Getenv("TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	if err := postgres.Migrate(ctx, pool, "up"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `TRUNCATE role, permission, "user", audit_log, app_setting, notification, announcement, webhook_event, api_key, attachment, fcm_device, va_requests, mitra CASCADE`); err != nil {
+		t.Fatal(err)
+	}
+	m := &mail.Memory{}
+	cfg := config.Config{Env: "test", WebURL: "http://web.test", JWTSecret: strings.Repeat("s", 32), RefreshPepper: strings.Repeat("p", 16), ThrottleLimit: 100000, LoginThrottleLimit: 100000, CaptchaThrottleLimit: 100000, LogLevel: "silent", MidtransServerKey: "test-server-key",
+		SNAPBaseURL:       "", // filled below
+		SNAPAdminUsername: "test-admin",
+		SNAPAdminPassword: "test-admin-pw",
+		SNAPSecretsDir:    t.TempDir(),
+		SNAPChannelID:     "02030",
+		SNAPOrigin:        "http://portal.test",
+	}
+	push := &fcm.Memory{}
+	logsDir := t.TempDir()
+	d := server.Deps{Cfg: cfg, Pool: pool, Mail: m, Push: push, CaptchaImage: captchaImage{}, CaptchaStore: nil,
+		LoginLog: server.AttemptRecorder{Log: loginlog.New(logsDir, func(err error) { t.Logf("login log: %v", err) })}}
+
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if cap != nil {
+			_ = json.NewDecoder(r.Body).Decode(&cap.body)
+			cap.auth = r.Header.Get("Authorization")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		clientID := "101"
+		if cap != nil {
+			if v, ok := cap.body["clientId"].(string); ok {
+				clientID = v
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"partnerId":    "P-777",
+			"clientId":     clientID,
+			"clientSecret": "s3cr3t-hmac",
+		})
+	}))
+	t.Cleanup(gateway.Close)
+	cfg.SNAPBaseURL = gateway.URL
+
+	prov, err := mitrainfra.NewProvisioner(mitrainfra.Config{
+		BaseURL:       cfg.SNAPBaseURL,
+		AdminUsername: cfg.SNAPAdminUsername,
+		AdminPassword: cfg.SNAPAdminPassword,
+		SecretsDir:    cfg.SNAPSecretsDir,
+		ChannelID:     cfg.SNAPChannelID,
+		Origin:        cfg.SNAPOrigin,
+		HTTPClient:    gateway.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.MitraProv = prov
+
+	f, _ := server.New(d)
+	return &env{t, f, store.New(pool), pool, m, push, logsDir}, gateway, cfg.SNAPSecretsDir
+}
+
 // seedUser creates a role holding perms (scope all) and an active user in it.
 func (e *env) seedUser(email string, perms ...policy.Permission) (userID, roleID string) {
 	ctx := context.Background()
@@ -155,7 +236,7 @@ func (e *env) seedUser(email string, perms ...policy.Permission) (userID, roleID
 func (e *env) seedMitra(kode, nama string) string {
 	e.t.Helper()
 	id := kernel.NewID()
-	must(e.t, e.q.CreateMitra(context.Background(), store.CreateMitraParams{ID: id, KodeMitra: kode, Nama: nama, IsActive: true}))
+	must(e.t, e.q.CreateMitra(context.Background(), store.CreateMitraParams{ID: id, KodeMitra: kode, Nama: nama, IsActive: true, ProvisionStatus: "READY"}))
 	return id
 }
 
@@ -504,7 +585,15 @@ func TestMitraChangesAreAudited(t *testing.T) {
 	superTok, _ := e.login("root@test.local")
 
 	// Create.
-	r := e.do("POST", "/mitra", map[string]any{"kodeMitra": "MTR-AUD", "nama": "Mitra Audit"}, bearer(superTok))
+	r := e.do("POST", "/mitra", map[string]any{
+		"kodeMitra":        "102",
+		"nama":             "Mitra Audit",
+		"partnerServiceId": "     102",
+		"vaPrefix":         "10241",
+		"branchCode":       "1020",
+		"rateLimitTier":    "standard",
+		"ipWhitelist":      []any{},
+	}, bearer(superTok))
 	expect(t, r, 201)
 	id := r.data()["id"].(string)
 
@@ -530,6 +619,193 @@ func TestMitraChangesAreAudited(t *testing.T) {
 			t.Fatalf("%s audit row must target the mitra: %s", action, rows.Raw)
 		}
 	}
+}
+
+// TestCreateMitraProvisionsBundle proves Milestone 2.5: creating a mitra with
+// the SNAP gateway configured generates its RSA-2048 keypair server-side,
+// registers the partner with the gateway, and writes the credential bundle
+// without any secret ever leaving the server.
+func TestCreateMitraProvisionsBundle(t *testing.T) {
+	e, _, secretsDir := setupWithSNAP(t, nil)
+	ctx := context.Background()
+
+	e.seedUser("root@test.local", all...)
+	superTok, _ := e.login("root@test.local")
+
+	r := e.do("POST", "/mitra", map[string]any{
+		"kodeMitra":        "101",
+		"nama":             "Mitra Provisioned",
+		"partnerServiceId": "     101",
+		"vaPrefix":         "10141",
+		"branchCode":       "1010",
+		"rateLimitTier":    "standard",
+		"ipWhitelist":      []any{"127.0.0.1"},
+	}, bearer(superTok))
+	expect(t, r, 201)
+	id := r.data()["id"].(string)
+	if r.data()["kodeMitra"] != "101" || r.data()["nama"] != "Mitra Provisioned" {
+		t.Fatalf("unexpected mitra data: %s", r.Raw)
+	}
+
+	dir := filepath.Join(secretsDir, "101")
+	partnerRaw, err := os.ReadFile(filepath.Join(dir, "partner.json"))
+	if err != nil {
+		t.Fatalf("partner.json not written: %v", err)
+	}
+	var partner struct {
+		PartnerID        string `json:"partnerId"`
+		ClientID         string `json:"clientId"`
+		PartnerServiceID string `json:"partnerServiceId"`
+		VAPrefix         string `json:"vaPrefix"`
+	}
+	if err := json.Unmarshal(partnerRaw, &partner); err != nil {
+		t.Fatalf("partner.json unreadable: %v", err)
+	}
+	if partner.PartnerID != "P-777" || partner.ClientID != "101" || partner.PartnerServiceID != "     101" || partner.VAPrefix != "10141" {
+		t.Fatalf("partner.json content wrong: %s", partnerRaw)
+	}
+
+	secret, err := os.ReadFile(filepath.Join(dir, "hmac.secret"))
+	if err != nil {
+		t.Fatalf("hmac.secret not written: %v", err)
+	}
+	if string(secret) != "s3cr3t-hmac" {
+		t.Fatalf("hmac.secret content wrong: %q", secret)
+	}
+	for _, name := range []string{"hmac.secret", "private.pem"} {
+		mode, err := filePerm(t, filepath.Join(dir, name))
+		if err != nil || mode&0o077 != 0 {
+			t.Fatalf("%s perm %v, want 0600", name, mode)
+		}
+	}
+	privateRaw, err := os.ReadFile(filepath.Join(dir, "private.pem"))
+	if err != nil {
+		t.Fatalf("private.pem not written: %v", err)
+	}
+	block, _ := pem.Decode(privateRaw)
+	if block == nil || block.Type != "PRIVATE KEY" {
+		t.Fatalf("private.pem is not a PKCS#8 PEM private key")
+	}
+	if _, err := x509.ParsePKCS8PrivateKey(block.Bytes); err != nil {
+		t.Fatalf("private.pem not parseable: %v", err)
+	}
+
+	// The mitra row exists and the secret never appeared in the response.
+	m, err := e.q.GetMitraByKode(ctx, "101")
+	if err != nil {
+		t.Fatalf("mitra row missing: %v", err)
+	}
+	if m.ID != id {
+		t.Fatalf("mitra id mismatch: %s vs %s", m.ID, id)
+	}
+	if strings.Contains(string(r.Raw), "s3cr3t-hmac") || strings.Contains(string(r.Raw), "PRIVATE KEY") {
+		t.Fatal("secret or private key leaked into the create response")
+	}
+}
+
+// TestCreateMitraValidationRejectsBadInput proves every create field is
+// validated before any key generation or gateway call.
+func TestCreateMitraValidationRejectsBadInput(t *testing.T) {
+	e, _, _ := setupWithSNAP(t, nil)
+
+	e.seedUser("root@test.local", all...)
+	superTok, _ := e.login("root@test.local")
+
+	base := map[string]any{
+		"kodeMitra":        "101",
+		"nama":             "Mitra Uji",
+		"partnerServiceId": "     101",
+		"vaPrefix":         "10141",
+		"branchCode":       "1010",
+		"rateLimitTier":    "standard",
+		"ipWhitelist":      []any{"127.0.0.1"},
+	}
+	expectBad := func(t *testing.T, body map[string]any) {
+		t.Helper()
+		r := e.do("POST", "/mitra", body, bearer(superTok))
+		if r.Code != 400 || r.errCode() != "VALIDATION_ERROR" {
+			t.Fatalf("expected 400 VALIDATION_ERROR, got %d %s: %s", r.Code, r.errCode(), r.Raw)
+		}
+	}
+	t.Helper()
+
+	bad := func(t *testing.T, body map[string]any) { expectBad(t, body) }
+	bad(t, mapMerge(base, map[string]any{"kodeMitra": "10"}))                    // not 3 digits
+	bad(t, mapMerge(base, map[string]any{"kodeMitra": "abc"}))                   // not digits
+	bad(t, mapMerge(base, map[string]any{"partnerServiceId": "     102"}))       // wrong derivation
+	bad(t, mapMerge(base, map[string]any{"partnerServiceId": "    101"}))        // not 8 chars
+	bad(t, mapMerge(base, map[string]any{"vaPrefix": "10241"}))                  // wrong derivation
+	bad(t, mapMerge(base, map[string]any{"branchCode": " "}))                    // empty
+	bad(t, mapMerge(base, map[string]any{"rateLimitTier": "premium"}))           // not standard
+	bad(t, mapMerge(base, map[string]any{"ipWhitelist": []any{"127.0.0.1/24"}})) // CIDR rejected
+	bad(t, mapMerge(base, map[string]any{"ipWhitelist": []any{"not-an-ip"}}))    // not an IP
+	badURL := "not-a-url"
+	bad(t, mapMerge(base, map[string]any{"callbackUrl": badURL}))
+}
+
+// TestCreateMitraRejectsExistingKode proves a kode already in the portal DB
+// cannot be re-created.
+func TestCreateMitraRejectsExistingKode(t *testing.T) {
+	e := setup(t)
+	e.seedUser("root@test.local", all...)
+	superTok, _ := e.login("root@test.local")
+
+	e.seedMitra("101", "Sudah Ada")
+	r := e.do("POST", "/mitra", map[string]any{
+		"kodeMitra":        "101",
+		"nama":             "Duplikat",
+		"partnerServiceId": "     101",
+		"vaPrefix":         "10141",
+		"branchCode":       "1010",
+		"rateLimitTier":    "standard",
+		"ipWhitelist":      []any{},
+	}, bearer(superTok))
+	expect(t, r, 409, "KODE_MITRA_TAKEN")
+}
+
+// TestCreateMitraRejectsExistingBundle proves a kode whose bundle folder
+// already exists (e.g. manually created 007/010 bundles) cannot be re-created,
+// and provisioning never touches those folders.
+func TestCreateMitraRejectsExistingBundle(t *testing.T) {
+	e, _, secretsDir := setupWithSNAP(t, nil)
+	e.seedUser("root@test.local", all...)
+	superTok, _ := e.login("root@test.local")
+
+	if err := os.MkdirAll(filepath.Join(secretsDir, "007"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	r := e.do("POST", "/mitra", map[string]any{
+		"kodeMitra":        "007",
+		"nama":             "Tidak Bisa",
+		"partnerServiceId": "     007",
+		"vaPrefix":         "00741",
+		"branchCode":       "0070",
+		"rateLimitTier":    "standard",
+		"ipWhitelist":      []any{},
+	}, bearer(superTok))
+	expect(t, r, 409, "BUNDLE_EXISTS")
+}
+
+// filePerm returns the permission bits of a file.
+func filePerm(t *testing.T, path string) (os.FileMode, error) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, err
+	}
+	return info.Mode().Perm(), nil
+}
+
+// mapMerge returns a copy of base with overlay applied.
+func mapMerge(base, overlay map[string]any) map[string]any {
+	out := make(map[string]any, len(base))
+	for k, v := range base {
+		out[k] = v
+	}
+	for k, v := range overlay {
+		out[k] = v
+	}
+	return out
 }
 
 // its users out: their refresh token stops working immediately.
@@ -917,7 +1193,7 @@ func TestCaptchaLoginMitra(t *testing.T) {
 	e.seedUser("mitra-user@test.local")
 	// A mitra row plus a user bound to it.
 	mitraID := kernel.NewID()
-	must(t, e.q.CreateMitra(context.Background(), store.CreateMitraParams{ID: mitraID, KodeMitra: "MTR-CAP", Nama: "Mitra Captcha", IsActive: true}))
+	must(t, e.q.CreateMitra(context.Background(), store.CreateMitraParams{ID: mitraID, KodeMitra: "MTR-CAP", Nama: "Mitra Captcha", IsActive: true, ProvisionStatus: "READY"}))
 	username := "capstaff"
 	_, err := e.pool.Exec(context.Background(), `UPDATE "user" SET mitra_id = $1, username = $2 WHERE email = $3`, mitraID, username, "mitra-user@test.local")
 	must(t, err)

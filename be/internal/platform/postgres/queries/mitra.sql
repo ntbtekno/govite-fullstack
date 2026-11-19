@@ -1,5 +1,6 @@
 -- name: CreateMitra :exec
-INSERT INTO "mitra" (id, kode_mitra, nama, is_active) VALUES ($1, $2, $3, $4);
+INSERT INTO "mitra" (id, kode_mitra, nama, is_active, partner_service_id, va_prefix, bundle_path, provision_status, provision_partner_id, provision_error)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);
 
 -- name: GetMitraByID :one
 SELECT * FROM "mitra" WHERE id = $1;
@@ -26,3 +27,8 @@ WHERE id = sqlc.arg(id);
 
 -- name: SetMitraActive :exec
 UPDATE "mitra" SET is_active = $2 WHERE id = $1;
+
+-- name: MarkMitraNeedsRepair :exec
+UPDATE "mitra"
+SET provision_status = 'NEEDS_REPAIR', provision_partner_id = $2, provision_error = $3
+WHERE id = $1;

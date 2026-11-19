@@ -28,6 +28,7 @@ import (
 	intinfra "govite/internal/integrations/infrastructure"
 	inthttp "govite/internal/integrations/interface/http"
 	mitraapp "govite/internal/mitra/application"
+	mitradomain "govite/internal/mitra/domain"
 	mitrainfra "govite/internal/mitra/infrastructure"
 	mitrahttp "govite/internal/mitra/interface/http"
 	notifyapp "govite/internal/notify/application"
@@ -90,6 +91,9 @@ type Deps struct {
 	// SNAP is the Create VA gateway client. Nil when SNAP_BASE_URL is unset
 	// (the feature is off). Built in cmd/api so a bad secret fails the boot.
 	SNAP vadomain.Gateway
+	// MitraProv is the mitra auto-provisioner. Nil when SNAP_BASE_URL is unset
+	// (mitra creation then skips bundle provisioning).
+	MitraProv mitradomain.Provisioner
 }
 
 // LoginAttempt is one line's metadata, re-exported so cmd/api does not import
@@ -198,7 +202,7 @@ func wire(d Deps) (handlers, *sysapp.Service) {
 
 	integrations := &intapp.Service{Repo: intinfra.Repository{DB: db}, Audit: auditor, Token: crypto.RandomToken, MidtransServerKey: d.Cfg.MidtransServerKey}
 
-	mitra := &mitraapp.Service{Repo: mitrainfra.Repository{DB: db}, Tx: db}
+	mitra := &mitraapp.Service{Repo: mitrainfra.Repository{DB: db}, Tx: db, Prov: d.MitraProv, SecretsDir: d.Cfg.SNAPSecretsDir}
 
 	reports := &reportsapp.Service{
 		Repo:      reportsinfra.NewRepository(d.ReportsDB),

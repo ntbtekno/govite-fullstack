@@ -60,6 +60,10 @@ func (h Handler) Routes(g rbac.Guarded) {
 		}
 		v, err := h.Svc.Create(c.UserContext(), b)
 		if err != nil {
+			if repair, ok := err.(*domain.NeedsRepairError); ok {
+				h.audit(c, "mitra.create_needs_repair", repair.Mitra.ID, repair.Mitra)
+				return httpx.OK(c, repair.Mitra)
+			}
 			return err
 		}
 		h.audit(c, "mitra.create", v.ID, v)

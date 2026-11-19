@@ -71,6 +71,10 @@ type Config struct {
 	SNAPSecretsDir string
 	SNAPChannelID  string
 	SNAPOrigin     string
+	// SNAP admin credentials for registering a mitra partner
+	// (POST /admin/v1/partners with HTTP Basic auth). Never logged.
+	SNAPAdminUsername string
+	SNAPAdminPassword string
 }
 
 // SNAPEnabled reports whether the SNAP Create VA gateway is configured.
@@ -189,6 +193,8 @@ func Load() (Config, error) {
 		SNAPSecretsDir:             str("SNAP_SECRETS_DIR", ""),
 		SNAPChannelID:              str("SNAP_CHANNEL_ID", ""),
 		SNAPOrigin:                 str("SNAP_ORIGIN", ""),
+		SNAPAdminUsername:          str("SNAP_ADMIN_USERNAME", ""),
+		SNAPAdminPassword:          str("SNAP_ADMIN_PASSWORD", ""),
 	}
 	for _, o := range strings.Split(str("CORS_ORIGIN", ""), ",") {
 		if o = strings.TrimSpace(o); o != "" {
@@ -217,8 +223,10 @@ func Load() (Config, error) {
 	// mitra must not stop every other mitra. The client validates the root dir.
 	if c.SNAPEnabled() {
 		for key, v := range map[string]string{
-			"SNAP_SECRETS_DIR": c.SNAPSecretsDir,
-			"SNAP_CHANNEL_ID":  c.SNAPChannelID,
+			"SNAP_SECRETS_DIR":    c.SNAPSecretsDir,
+			"SNAP_CHANNEL_ID":     c.SNAPChannelID,
+			"SNAP_ADMIN_USERNAME": c.SNAPAdminUsername,
+			"SNAP_ADMIN_PASSWORD": c.SNAPAdminPassword,
 		} {
 			if v == "" {
 				errs = append(errs, key+" is required when SNAP_BASE_URL is set")

@@ -22,6 +22,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"govite/internal/kernel"
+	mitrainfra "govite/internal/mitra/infrastructure"
 	"govite/internal/platform/config"
 	"govite/internal/platform/crypto"
 	"govite/internal/platform/fcm"
@@ -151,6 +152,23 @@ func serve(ctx context.Context, cfg config.Config, pool *pgxpool.Pool) error {
 		return fmt.Errorf("SNAP: %w", err)
 	} else if snap != nil {
 		d.SNAP = snap
+	}
+
+	// Mitra auto-provisioner: registers each new mitra with the gateway and
+	// writes its credential bundle. Only built when the gateway is configured.
+	if cfg.SNAPBaseURL != "" {
+		prov, err := mitrainfra.NewProvisioner(mitrainfra.Config{
+			BaseURL:       cfg.SNAPBaseURL,
+			AdminUsername: cfg.SNAPAdminUsername,
+			AdminPassword: cfg.SNAPAdminPassword,
+			SecretsDir:    cfg.SNAPSecretsDir,
+			ChannelID:     cfg.SNAPChannelID,
+			Origin:        cfg.SNAPOrigin,
+		})
+		if err != nil {
+			return fmt.Errorf("SNAP provisioner: %w", err)
+		}
+		d.MitraProv = prov
 	}
 
 	// Optional read-only MySQL reporting sidecar. Empty DSN keeps the server
@@ -283,7 +301,7 @@ func seedE2EMitra(ctx context.Context, cfg config.Config, q *store.Queries) erro
 	mitra, err := q.GetMitraByKode(ctx, kode)
 	if err != nil {
 		mitra = store.Mitra{ID: kernel.NewID(), KodeMitra: kode, Nama: "Mitra E2E", IsActive: true}
-		if err := q.CreateMitra(ctx, store.CreateMitraParams{ID: mitra.ID, KodeMitra: mitra.KodeMitra, Nama: mitra.Nama, IsActive: true}); err != nil {
+		if err := q.CreateMitra(ctx, store.CreateMitraParams{ID: mitra.ID, KodeMitra: mitra.KodeMitra, Nama: mitra.Nama, IsActive: true, ProvisionStatus: "READY"}); err != nil {
 			return err
 		}
 	}

@@ -31,6 +31,7 @@ printf '%s' 'e2e-only-hmac-secret' > "$snap_secrets/010/hmac.secret"
 openssl genrsa -out "$snap_secrets/010/private.pem" 2048 >/dev/null 2>&1
 chmod 600 "$snap_secrets/010/partner.json" "$snap_secrets/010/hmac.secret" "$snap_secrets/010/private.pem"
 export SNAP_BASE_URL="http://127.0.0.1:18080" SNAP_SECRETS_DIR="$snap_secrets" SNAP_CHANNEL_ID=02030
+export SNAP_ADMIN_USERNAME="e2e-admin" SNAP_ADMIN_PASSWORD="e2e-admin-password"
 go run "$root/scripts/fake-snap.go" >/dev/null 2>&1 & snap=$!
 go build -o bin/api ./cmd/api
 ./bin/api migrate >/dev/null

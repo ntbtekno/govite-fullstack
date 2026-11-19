@@ -352,8 +352,24 @@ export const MitraListQuerySchema = PaginationQuerySchema
 export type MitraListQuery = z.infer<typeof MitraListQuerySchema>
 
 export const CreateMitraRequestSchema = z.object({
-  kodeMitra: z.string().trim().min(1).max(50),
+  kodeMitra: z.string().trim().min(1).max(50).regex(/^[0-9]{3}$/, "Kode mitra harus 3 digit angka"),
   nama: z.string().trim().min(1).max(200),
+  partnerServiceId: z.string().trim().min(1).max(8),
+  vaPrefix: z.string().trim().min(1),
+  branchCode: z.string().trim().min(1),
+  callbackUrl: z.string().trim().url().optional(),
+  rateLimitTier: z.string().min(1),
+  ipWhitelist: z
+    .array(
+      z
+        .string()
+        .trim()
+        .regex(
+          /^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)$|^\[?[0-9a-fA-F:]+\]?$/,
+          "Harus alamat IP tunggal, bukan CIDR",
+        ),
+    )
+    .default([]),
 })
 export type CreateMitraRequest = z.infer<typeof CreateMitraRequestSchema>
 

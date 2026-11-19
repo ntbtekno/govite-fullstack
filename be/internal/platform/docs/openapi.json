@@ -6770,14 +6770,48 @@
         "type": "object",
         "required": [
           "kodeMitra",
-          "nama"
+          "nama",
+          "partnerServiceId",
+          "vaPrefix",
+          "branchCode",
+          "rateLimitTier"
         ],
         "properties": {
           "kodeMitra": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^[0-9]{3}$",
+            "maxLength": 3
           },
           "nama": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "partnerServiceId": {
+            "type": "string",
+            "maxLength": 8
+          },
+          "vaPrefix": {
+            "type": "string",
+            "maxLength": 11
+          },
+          "branchCode": {
             "type": "string"
+          },
+          "callbackUrl": {
+            "type": "string",
+            "format": "uri"
+          },
+          "rateLimitTier": {
+            "type": "string",
+            "enum": [
+              "standard"
+            ]
+          },
+          "ipWhitelist": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },

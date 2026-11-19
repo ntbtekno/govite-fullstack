@@ -1,0 +1,254 @@
+package infrastructure
+
+import (
+	"context"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/json"
+	"encoding/pem"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"govite/internal/mitra/domain"
+)
+
+func TestProvisionerWritesBundleAndRegisters(t *testing.T) {
+	secretsDir := t.TempDir()
+	var received struct {
+		BasicUser   string
+		BasicPass   string
+		Body        map[string]any
+		AuthHeader  string
+		ContentType string
+	}
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/admin/v1/partners" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		received.AuthHeader = r.Header.Get("Authorization")
+		received.ContentType = r.Header.Get("Content-Type")
+		u, p, ok := r.BasicAuth()
+		received.BasicUser, received.BasicPass = u, p
+		if !ok {
+			t.Errorf("missing basic auth")
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := json.Unmarshal(raw, &received.Body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"partnerId":    "P-999",
+			"clientId":     received.Body["clientId"],
+			"clientSecret": "hmac-secret-123",
+		})
+	}))
+	defer gateway.Close()
+
+	p, err := NewProvisioner(Config{
+		BaseURL:       gateway.URL,
+		AdminUsername: "admin",
+		AdminPassword: "pw",
+		SecretsDir:    secretsDir,
+		ChannelID:     "02030",
+		HTTPClient:    gateway.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := p.Provision(context.Background(), "101", domain.ProvisionInput{
+		Nama:             "Mitra Satu",
+		PartnerServiceID: "     101",
+		VAPrefix:         "10141",
+		BranchCode:       "0101",
+		CallbackURL:      "https://mitra.example.com/cb",
+		RateLimitTier:    "standard",
+		IPWhitelist:      []string{"127.0.0.1"},
+	})
+	if err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	if res.PartnerID != "P-999" || res.ClientID != "101" {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+
+	if received.BasicUser != "admin" || received.BasicPass != "pw" {
+		t.Fatalf("basic auth not forwarded: %q %q", received.BasicUser, received.BasicPass)
+	}
+	if !strings.HasPrefix(received.AuthHeader, "Basic ") {
+		t.Fatalf("missing Basic auth header: %q", received.AuthHeader)
+	}
+	body, ok := received.Body["rsaPublicKey"].(string)
+	if !ok || !strings.HasPrefix(body, "-----BEGIN PUBLIC KEY-----") {
+		t.Fatalf("rsaPublicKey missing or not PEM: %v", received.Body["rsaPublicKey"])
+	}
+	if received.Body["clientId"] != "101" || received.Body["vaPrefix"] != "10141" {
+		t.Fatalf("unexpected body fields: %+v", received.Body)
+	}
+	if whitelist, _ := received.Body["ipWhitelist"].([]any); len(whitelist) != 1 || whitelist[0] != "127.0.0.1" {
+		t.Fatalf("ipWhitelist not forwarded: %+v", received.Body["ipWhitelist"])
+	}
+
+	dir := filepath.Join(secretsDir, "101")
+	partnerRaw, err := os.ReadFile(filepath.Join(dir, "partner.json"))
+	if err != nil {
+		t.Fatalf("partner.json not written: %v", err)
+	}
+	var partner struct {
+		PartnerID        string `json:"partnerId"`
+		ClientID         string `json:"clientId"`
+		PartnerServiceID string `json:"partnerServiceId"`
+		VAPrefix         string `json:"vaPrefix"`
+	}
+	if err := json.Unmarshal(partnerRaw, &partner); err != nil {
+		t.Fatalf("partner.json unreadable: %v", err)
+	}
+	if partner.PartnerID != "P-999" || partner.ClientID != "101" || partner.PartnerServiceID != "     101" || partner.VAPrefix != "10141" {
+		t.Fatalf("partner.json content wrong: %s", partnerRaw)
+	}
+
+	secret, err := os.ReadFile(filepath.Join(dir, "hmac.secret"))
+	if err != nil {
+		t.Fatalf("hmac.secret not written: %v", err)
+	}
+	if string(secret) != "hmac-secret-123" {
+		t.Fatalf("hmac.secret content wrong: %q", secret)
+	}
+	if mode, err := filePerm(filepath.Join(dir, "hmac.secret")); err != nil || mode&0o077 != 0 {
+		t.Fatalf("hmac.secret perm %v, want 0600", mode)
+	}
+
+	privateRaw, err := os.ReadFile(filepath.Join(dir, "private.pem"))
+	if err != nil {
+		t.Fatalf("private.pem not written: %v", err)
+	}
+	block, _ := pem.Decode(privateRaw)
+	if block == nil || block.Type != "PRIVATE KEY" {
+		t.Fatalf("private.pem is not a PKCS#8 PEM private key")
+	}
+	if _, err := x509.ParsePKCS8PrivateKey(block.Bytes); err != nil {
+		t.Fatalf("private.pem not parseable: %v", err)
+	}
+	if mode, err := filePerm(filepath.Join(dir, "private.pem")); err != nil || mode&0o077 != 0 {
+		t.Fatalf("private.pem perm %v, want 0600", mode)
+	}
+
+	// The M2 loader shape (partnerId + clientId) still parses fine with the
+	// extended partner.json.
+	var loaderShape struct {
+		PartnerID string `json:"partnerId"`
+		ClientID  string `json:"clientId"`
+	}
+	if err := json.Unmarshal(partnerRaw, &loaderShape); err != nil {
+		t.Fatalf("M2 loader shape must tolerate extended partner.json: %v", err)
+	}
+
+	// The registered public key must match the private key in the bundle.
+	bodyMap, _ := received.Body["rsaPublicKey"].(string)
+	pubBlock, _ := pem.Decode([]byte(bodyMap))
+	pub, err := x509.ParsePKIXPublicKey(pubBlock.Bytes)
+	if err != nil {
+		t.Fatalf("public key parse: %v", err)
+	}
+	priv, _ := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if fmt.Sprint(pub) != fmt.Sprint(&priv.(*rsa.PrivateKey).PublicKey) {
+		t.Fatal("registered public key does not match bundled private key")
+	}
+}
+
+func TestProvisionerRejectsMisconfigAndExistingBundle(t *testing.T) {
+	secretsDir := t.TempDir()
+
+	// No base URL: provisioning unavailable.
+	p, err := ConfigIf(secretsDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Provision(context.Background(), "101", domain.ProvisionInput{}); err == nil {
+		t.Fatal("expected ErrSNAPNotConfigured without base URL")
+	}
+
+	// Existing bundle dir is rejected before any gateway call.
+	if err := os.MkdirAll(filepath.Join(secretsDir, "007"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("gateway must not be called when bundle already exists")
+	}))
+	defer gateway.Close()
+	p2, err := ConfigIf(secretsDir, gateway.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p2.Provision(context.Background(), "007", domain.ProvisionInput{}); err == nil {
+		t.Fatal("expected ErrBundleExists for existing bundle dir")
+	}
+
+	// Gateway failure propagates as provisioning failure.
+	gateway2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer gateway2.Close()
+	p3, err := ConfigIf(secretsDir, gateway2.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p3.Provision(context.Background(), "102", domain.ProvisionInput{}); err == nil {
+		t.Fatal("expected error when gateway rejects registration")
+	}
+}
+
+func TestProvisionerBundleWriteFailureKeepsPartnerIDAndNoPartialBundle(t *testing.T) {
+	secretsDir := t.TempDir()
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{"partnerId": "P-REPAIR", "clientId": "103", "clientSecret": "one-time"})
+	}))
+	defer gateway.Close()
+
+	p, err := NewProvisioner(Config{
+		BaseURL: gateway.URL, SecretsDir: secretsDir, AdminUsername: "a", AdminPassword: "b",
+		HTTPClient:  gateway.Client(),
+		AtomicWrite: func(path string, data []byte) error { return fmt.Errorf("disk full") },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = p.Provision(context.Background(), "103", domain.ProvisionInput{PartnerServiceID: "     103", VAPrefix: "10341"})
+	var pe *domain.ProvisionError
+	if !errors.As(err, &pe) || pe.PartnerID != "P-REPAIR" || pe.Detail != "write partner.json: disk full" {
+		t.Fatalf("expected repair evidence with exact error, got %T %v", err, err)
+	}
+	if _, statErr := os.Stat(filepath.Join(secretsDir, "103", "partner.json")); !os.IsNotExist(statErr) {
+		t.Fatalf("partial bundle must not remain, stat error=%v", statErr)
+	}
+}
+
+func filePerm(path string) (os.FileMode, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, err
+	}
+	return info.Mode().Perm(), nil
+}
+
+// ConfigIf is a test-only helper: NewProvisioner with a single base URL.
+func ConfigIf(secretsDir, baseURL string) (*Provisioner, error) {
+	return NewProvisioner(Config{BaseURL: baseURL, SecretsDir: secretsDir, AdminUsername: "a", AdminPassword: "b"})
+}

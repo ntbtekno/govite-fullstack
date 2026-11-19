@@ -73,11 +73,17 @@ type FcmDevice struct {
 }
 
 type Mitra struct {
-	ID        string
-	KodeMitra string
-	Nama      string
-	IsActive  bool
-	CreatedAt time.Time
+	ID                 string
+	KodeMitra          string
+	Nama               string
+	IsActive           bool
+	CreatedAt          time.Time
+	PartnerServiceID   string
+	VaPrefix           string
+	BundlePath         string
+	ProvisionStatus    string
+	ProvisionPartnerID *string
+	ProvisionError     *string
 }
 
 type Notification struct {
