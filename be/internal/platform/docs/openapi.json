@@ -869,6 +869,24 @@
         }
       }
     },
+    "/api/v1/mitra/{id}/rotate-secret": {
+      "post": {
+        "operationId": "MitraController_rotateSecret",
+        "summary": "Rotate a mitra HMAC secret",
+        "tags": ["Mitra"],
+        "parameters": [{
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {"type": "string", "format": "uuid"}
+        }],
+        "responses": {
+          "200": {"description": "Secret rotated", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Envelope"}}}},
+          "404": {"description": "Mitra not found", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Envelope"}}}},
+          "503": {"description": "Gateway rotate contract unavailable", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Envelope"}}}}
+        }
+      }
+    },
     "/api/v1/users": {
       "get": {
         "operationId": "UsersController_list",
@@ -6774,7 +6792,9 @@
           "partnerServiceId",
           "vaPrefix",
           "branchCode",
-          "rateLimitTier"
+          "rateLimitTier",
+          "callbackUrl",
+          "connectionType"
         ],
         "properties": {
           "kodeMitra": {
@@ -6812,6 +6832,10 @@
             "items": {
               "type": "string"
             }
+          },
+          "connectionType": {
+            "type": "string",
+            "enum": ["PORTAL_ONLY", "HOST_TO_HOST"]
           }
         }
       },
@@ -6823,6 +6847,10 @@
           },
           "nama": {
             "type": "string"
+          },
+          "connectionType": {
+            "type": "string",
+            "enum": ["PORTAL_ONLY", "HOST_TO_HOST"]
           }
         }
       },

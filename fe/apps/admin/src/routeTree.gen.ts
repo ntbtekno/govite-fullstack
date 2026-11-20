@@ -33,8 +33,11 @@ import { Route as AdminAdministrationSystemRouteImport } from './routes/admin.ad
 import { Route as AdminAdministrationUsersRouteImport } from './routes/admin.administration.users'
 import { Route as AdminAdministrationWebhooksRouteImport } from './routes/admin.administration.webhooks'
 import { Route as AdminToolsCreateVaRouteImport } from './routes/admin.tools.create-va'
+import { Route as AdminAdministrationMitraMitraIdRouteImport } from './routes/admin.administration.mitra_.$mitraId'
 import { Route as AdminAdministrationRolesRoleIdRouteImport } from './routes/admin.administration.roles_.$roleId'
 import { Route as AdminAdministrationUsersUserIdRouteImport } from './routes/admin.administration.users_.$userId'
+import { Route as AdminAdministrationMitraMitraIdCredentialsRouteImport } from './routes/admin.administration.mitra_.$mitraId_.credentials'
+import { Route as AdminAdministrationMitraMitraIdRotateRouteImport } from './routes/admin.administration.mitra_.$mitraId_.rotate'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -166,6 +169,12 @@ const AdminToolsCreateVaRoute = AdminToolsCreateVaRouteImport.update({
   path: '/tools/create-va',
   getParentRoute: () => AdminRoute,
 } as any)
+const AdminAdministrationMitraMitraIdRoute =
+  AdminAdministrationMitraMitraIdRouteImport.update({
+    id: '/administration/mitra_/$mitraId',
+    path: '/administration/mitra/$mitraId',
+    getParentRoute: () => AdminRoute,
+  } as any)
 const AdminAdministrationRolesRoleIdRoute =
   AdminAdministrationRolesRoleIdRouteImport.update({
     id: '/administration/roles_/$roleId',
@@ -176,6 +185,18 @@ const AdminAdministrationUsersUserIdRoute =
   AdminAdministrationUsersUserIdRouteImport.update({
     id: '/administration/users_/$userId',
     path: '/administration/users/$userId',
+    getParentRoute: () => AdminRoute,
+  } as any)
+const AdminAdministrationMitraMitraIdCredentialsRoute =
+  AdminAdministrationMitraMitraIdCredentialsRouteImport.update({
+    id: '/administration/mitra_/$mitraId_/credentials',
+    path: '/administration/mitra/$mitraId/credentials',
+    getParentRoute: () => AdminRoute,
+  } as any)
+const AdminAdministrationMitraMitraIdRotateRoute =
+  AdminAdministrationMitraMitraIdRotateRouteImport.update({
+    id: '/administration/mitra_/$mitraId_/rotate',
+    path: '/administration/mitra/$mitraId/rotate',
     getParentRoute: () => AdminRoute,
   } as any)
 
@@ -204,8 +225,11 @@ export interface FileRoutesByFullPath {
   '/admin/administration/users': typeof AdminAdministrationUsersRoute
   '/admin/administration/webhooks': typeof AdminAdministrationWebhooksRoute
   '/admin/tools/create-va': typeof AdminToolsCreateVaRoute
+  '/admin/administration/mitra/$mitraId': typeof AdminAdministrationMitraMitraIdRoute
   '/admin/administration/roles/$roleId': typeof AdminAdministrationRolesRoleIdRoute
   '/admin/administration/users/$userId': typeof AdminAdministrationUsersUserIdRoute
+  '/admin/administration/mitra/$mitraId/credentials': typeof AdminAdministrationMitraMitraIdCredentialsRoute
+  '/admin/administration/mitra/$mitraId/rotate': typeof AdminAdministrationMitraMitraIdRotateRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -232,8 +256,11 @@ export interface FileRoutesByTo {
   '/admin/administration/users': typeof AdminAdministrationUsersRoute
   '/admin/administration/webhooks': typeof AdminAdministrationWebhooksRoute
   '/admin/tools/create-va': typeof AdminToolsCreateVaRoute
+  '/admin/administration/mitra/$mitraId': typeof AdminAdministrationMitraMitraIdRoute
   '/admin/administration/roles/$roleId': typeof AdminAdministrationRolesRoleIdRoute
   '/admin/administration/users/$userId': typeof AdminAdministrationUsersUserIdRoute
+  '/admin/administration/mitra/$mitraId/credentials': typeof AdminAdministrationMitraMitraIdCredentialsRoute
+  '/admin/administration/mitra/$mitraId/rotate': typeof AdminAdministrationMitraMitraIdRotateRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -261,8 +288,11 @@ export interface FileRoutesById {
   '/admin/administration/users': typeof AdminAdministrationUsersRoute
   '/admin/administration/webhooks': typeof AdminAdministrationWebhooksRoute
   '/admin/tools/create-va': typeof AdminToolsCreateVaRoute
+  '/admin/administration/mitra_/$mitraId': typeof AdminAdministrationMitraMitraIdRoute
   '/admin/administration/roles_/$roleId': typeof AdminAdministrationRolesRoleIdRoute
   '/admin/administration/users_/$userId': typeof AdminAdministrationUsersUserIdRoute
+  '/admin/administration/mitra_/$mitraId_/credentials': typeof AdminAdministrationMitraMitraIdCredentialsRoute
+  '/admin/administration/mitra_/$mitraId_/rotate': typeof AdminAdministrationMitraMitraIdRotateRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -291,8 +321,11 @@ export interface FileRouteTypes {
     | '/admin/administration/users'
     | '/admin/administration/webhooks'
     | '/admin/tools/create-va'
+    | '/admin/administration/mitra/$mitraId'
     | '/admin/administration/roles/$roleId'
     | '/admin/administration/users/$userId'
+    | '/admin/administration/mitra/$mitraId/credentials'
+    | '/admin/administration/mitra/$mitraId/rotate'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -319,8 +352,11 @@ export interface FileRouteTypes {
     | '/admin/administration/users'
     | '/admin/administration/webhooks'
     | '/admin/tools/create-va'
+    | '/admin/administration/mitra/$mitraId'
     | '/admin/administration/roles/$roleId'
     | '/admin/administration/users/$userId'
+    | '/admin/administration/mitra/$mitraId/credentials'
+    | '/admin/administration/mitra/$mitraId/rotate'
   id:
     | '__root__'
     | '/'
@@ -347,8 +383,11 @@ export interface FileRouteTypes {
     | '/admin/administration/users'
     | '/admin/administration/webhooks'
     | '/admin/tools/create-va'
+    | '/admin/administration/mitra_/$mitraId'
     | '/admin/administration/roles_/$roleId'
     | '/admin/administration/users_/$userId'
+    | '/admin/administration/mitra_/$mitraId_/credentials'
+    | '/admin/administration/mitra_/$mitraId_/rotate'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -532,6 +571,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminToolsCreateVaRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/admin/administration/mitra_/$mitraId': {
+      id: '/admin/administration/mitra_/$mitraId'
+      path: '/administration/mitra/$mitraId'
+      fullPath: '/admin/administration/mitra/$mitraId'
+      preLoaderRoute: typeof AdminAdministrationMitraMitraIdRouteImport
+      parentRoute: typeof AdminRoute
+    }
     '/admin/administration/roles_/$roleId': {
       id: '/admin/administration/roles_/$roleId'
       path: '/administration/roles/$roleId'
@@ -544,6 +590,20 @@ declare module '@tanstack/react-router' {
       path: '/administration/users/$userId'
       fullPath: '/admin/administration/users/$userId'
       preLoaderRoute: typeof AdminAdministrationUsersUserIdRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/administration/mitra_/$mitraId_/credentials': {
+      id: '/admin/administration/mitra_/$mitraId_/credentials'
+      path: '/administration/mitra/$mitraId/credentials'
+      fullPath: '/admin/administration/mitra/$mitraId/credentials'
+      preLoaderRoute: typeof AdminAdministrationMitraMitraIdCredentialsRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/administration/mitra_/$mitraId_/rotate': {
+      id: '/admin/administration/mitra_/$mitraId_/rotate'
+      path: '/administration/mitra/$mitraId/rotate'
+      fullPath: '/admin/administration/mitra/$mitraId/rotate'
+      preLoaderRoute: typeof AdminAdministrationMitraMitraIdRotateRouteImport
       parentRoute: typeof AdminRoute
     }
   }
@@ -566,8 +626,11 @@ interface AdminRouteChildren {
   AdminAdministrationUsersRoute: typeof AdminAdministrationUsersRoute
   AdminAdministrationWebhooksRoute: typeof AdminAdministrationWebhooksRoute
   AdminToolsCreateVaRoute: typeof AdminToolsCreateVaRoute
+  AdminAdministrationMitraMitraIdRoute: typeof AdminAdministrationMitraMitraIdRoute
   AdminAdministrationRolesRoleIdRoute: typeof AdminAdministrationRolesRoleIdRoute
   AdminAdministrationUsersUserIdRoute: typeof AdminAdministrationUsersUserIdRoute
+  AdminAdministrationMitraMitraIdCredentialsRoute: typeof AdminAdministrationMitraMitraIdCredentialsRoute
+  AdminAdministrationMitraMitraIdRotateRoute: typeof AdminAdministrationMitraMitraIdRotateRoute
 }
 
 const AdminRouteChildren: AdminRouteChildren = {
@@ -587,8 +650,13 @@ const AdminRouteChildren: AdminRouteChildren = {
   AdminAdministrationUsersRoute: AdminAdministrationUsersRoute,
   AdminAdministrationWebhooksRoute: AdminAdministrationWebhooksRoute,
   AdminToolsCreateVaRoute: AdminToolsCreateVaRoute,
+  AdminAdministrationMitraMitraIdRoute: AdminAdministrationMitraMitraIdRoute,
   AdminAdministrationRolesRoleIdRoute: AdminAdministrationRolesRoleIdRoute,
   AdminAdministrationUsersUserIdRoute: AdminAdministrationUsersUserIdRoute,
+  AdminAdministrationMitraMitraIdCredentialsRoute:
+    AdminAdministrationMitraMitraIdCredentialsRoute,
+  AdminAdministrationMitraMitraIdRotateRoute:
+    AdminAdministrationMitraMitraIdRotateRoute,
 }
 
 const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)

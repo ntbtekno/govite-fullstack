@@ -139,7 +139,7 @@ test("create a user from the dialog", async ({ page }) => {
   expect(problems).toEqual([])
 })
 
-test("superadmin creates a mitra with HTTPS callback and provisions its bundle", async ({ page }) => {
+test("superadmin creates H2H mitra, sees credentials once, and rotates secret", async ({ page }) => {
   const problems = watch(page)
   await signIn(page)
   await page.goto("/admin/administration/mitra")
@@ -153,6 +153,7 @@ test("superadmin creates a mitra with HTTPS callback and provisions its bundle",
   await dialog.getByLabel("Kode Cabang").fill("001")
   await dialog.getByLabel("Callback URL").fill("https://example.com/callback")
   await dialog.getByLabel("IP whitelist").fill("127.0.0.1")
+  await dialog.getByLabel("Connection type").selectOption("HOST_TO_HOST")
   const responsePromise = page.waitForResponse(
     (response) => response.url().includes("/api/v1/mitra") && response.request().method() === "POST",
   )
@@ -160,19 +161,49 @@ test("superadmin creates a mitra with HTTPS callback and provisions its bundle",
   const response = await responsePromise
   const responseBody = await response.json()
   expect(response.ok(), JSON.stringify(responseBody)).toBe(true)
-  const created = responseBody
-  expect(created.data.provisionStatus).toBe("READY")
-  expect(created.data.bundlePath).toBeTruthy()
+  const created = responseBody.data
+  expect(created.mitra.provisionStatus).toBe("READY")
+  expect(created.mitra.bundlePath).toBeTruthy()
+  expect(created.credentials.clientSecret).toBeTruthy()
+  expect(created.credentials.privateKeyPem).toContain("BEGIN PRIVATE KEY")
   const bundleDir = path.join(process.env.E2E_SNAP_SECRETS_DIR ?? "", kode)
   for (const file of ["partner.json", "hmac.secret", "private.pem"]) {
     await access(path.join(bundleDir, file))
     expect((await stat(path.join(bundleDir, file))).size).toBeGreaterThan(0)
   }
+  await expect(page.getByRole("heading", { name: "One-time credentials" })).toBeVisible()
+  await expect(page.getByText("These credentials are shown once", { exact: false })).toBeVisible()
+  await page.reload()
+  await expect(page.getByText("Credentials already delivered")).toBeVisible()
+  await page.goto(`/admin/administration/mitra/${created.mitra.id}`)
+  await page.getByRole("link", { name: "Rotate Secret" }).click()
+  await page.getByRole("button", { name: "Rotate Secret" }).click()
+  await expect(page.getByRole("dialog", { name: "Confirm secret rotation" })).toBeVisible()
+  await page.getByRole("button", { name: "Confirm Rotate" }).click()
+  await expect(page.getByRole("heading", { name: "One-time credentials" })).toBeVisible()
+  await expect(page.getByText("e2e-rotated-hmac-secret")).toBeVisible()
+  expect(problems).toEqual([])
+})
+
+test("superadmin creates portal-only mitra without a credentials screen", async ({ page }) => {
+  const problems = watch(page)
+  await signIn(page)
+  await page.goto("/admin/administration/mitra")
+  await page.getByRole("button", { name: "Add mitra" }).click()
+  const dialog = page.getByRole("dialog", { name: "New mitra" })
+  const kode = String(Date.now() + 1).slice(-3)
+  await dialog.getByLabel("Connection type").selectOption("PORTAL_ONLY")
+  await dialog.getByLabel("Kode mitra").fill(kode)
+  await dialog.getByLabel("Nama mitra").fill("E2E Portal Mitra")
+  await dialog.getByLabel("Partner Service ID").fill(`     ${kode}`)
+  await dialog.getByLabel("VA Prefix").fill(`${kode}41`)
+  await dialog.getByLabel("Kode Cabang").fill("001")
+  await dialog.getByLabel("Callback URL").fill("https://example.com/callback")
+  await dialog.getByRole("button", { name: "Create" }).click()
   await expect(dialog).toBeHidden()
+  await expect(page.getByRole("heading", { name: "One-time credentials" })).toHaveCount(0)
   await page.getByPlaceholder(/search/i).fill(kode)
-  const row = page.getByRole("row", { name: new RegExp(kode) })
-  await expect(row).toBeVisible()
-  await expect(row).toContainText("Active")
+  await expect(page.getByRole("row", { name: new RegExp(kode) })).toContainText("Portal only")
   expect(problems).toEqual([])
 })
 

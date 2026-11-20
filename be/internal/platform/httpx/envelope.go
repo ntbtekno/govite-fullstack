@@ -107,6 +107,7 @@ var messageInd = map[string]string{
 	"VA_GATEWAY_ERROR":             "Gateway VA gagal memproses permintaan",
 	"VA_RATE_LIMITED":              "Batas laju gateway VA terlampaui",
 	"VA_PARTNER_TOKEN_MISMATCH":    "Token gateway tidak cocok dengan mitra",
+	"ROTATE_CONTRACT_MISSING":      "Kontrak rotasi secret gateway belum tersedia",
 	"VA_SIGNATURE_INVALID":         "Autentikasi gateway tidak valid",
 	"VA_UNEXPECTED_CODE":           "Gateway memberi respons yang tidak dikenal",
 	"VA_TOKEN_REQUEST_FAILED":      "Permintaan token gateway gagal",

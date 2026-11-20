@@ -370,12 +370,14 @@ export const CreateMitraRequestSchema = z.object({
         ),
     )
     .default([]),
+  connectionType: z.enum(["PORTAL_ONLY", "HOST_TO_HOST"]),
 })
 export type CreateMitraRequest = z.infer<typeof CreateMitraRequestSchema>
 
 export const UpdateMitraRequestSchema = z.object({
   kodeMitra: z.string().trim().min(1).max(50).optional(),
   nama: z.string().trim().min(1).max(200).optional(),
+  connectionType: z.enum(["PORTAL_ONLY", "HOST_TO_HOST"]).optional(),
 })
 export type UpdateMitraRequest = z.infer<typeof UpdateMitraRequestSchema>
 
@@ -385,4 +387,37 @@ export interface MitraResponse {
   nama: string
   isActive: boolean
   createdAt: string
+  partnerServiceId: string
+  vaPrefix: string
+  bundlePath: string
+  provisionStatus: string
+  provisionPartnerId?: string
+  provisionError?: string
+  connectionType: "PORTAL_ONLY" | "HOST_TO_HOST"
+  credentialsDelivered: boolean
+  bundleCompleteness?: {
+    partnerJson: boolean
+    hmacSecret: boolean
+    privatePem: boolean
+  }
+}
+
+export interface MitraCredentialDelivery {
+  partnerId: string
+  clientId: string
+  partnerServiceId: string
+  vaPrefix: string
+  gatewayBaseUrl: string
+  clientSecret: string
+  privateKeyPem: string
+}
+
+export interface CreateMitraResponse {
+  mitra: MitraResponse
+  credentials?: MitraCredentialDelivery
+}
+
+export interface RotateMitraResponse {
+  mitra: MitraResponse
+  credentials?: MitraCredentialDelivery
 }

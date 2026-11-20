@@ -36,6 +36,7 @@ export SNAP_ADMIN_USERNAME="e2e-admin" SNAP_ADMIN_PASSWORD="e2e-admin-password"
 go run "$root/scripts/fake-snap.go" >/dev/null 2>&1 & snap=$!
 go build -o bin/api ./cmd/api
 ./bin/api migrate >/dev/null
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "DELETE FROM mitra WHERE nama IN ('E2E Provisioned Mitra', 'E2E Portal Mitra')" >/dev/null
 ./bin/api seed >/dev/null
 
 ./bin/api & api=$!

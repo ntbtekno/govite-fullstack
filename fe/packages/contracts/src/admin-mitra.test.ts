@@ -9,6 +9,7 @@ const base = {
   branchCode: "001",
   rateLimitTier: "standard",
   ipWhitelist: [],
+  connectionType: "PORTAL_ONLY" as const,
 }
 
 describe("CreateMitraRequestSchema callbackUrl", () => {

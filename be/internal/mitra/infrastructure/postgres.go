@@ -23,6 +23,7 @@ func (r Repository) toMitra(m store.Mitra) domain.Mitra {
 		PartnerServiceID: m.PartnerServiceID, VAPrefix: m.VaPrefix,
 		BundlePath: m.BundlePath, ProvisionStatus: m.ProvisionStatus,
 		ProvisionPartnerID: m.ProvisionPartnerID, ProvisionError: m.ProvisionError,
+		ConnectionType: m.ConnectionType, CredentialsDelivered: m.CredentialsDelivered,
 	}
 }
 
@@ -53,8 +54,8 @@ func (r Repository) Count(ctx context.Context, f domain.Filter) (int64, error) {
 	return r.DB.Q(ctx).CountMitra(ctx, f.Search)
 }
 
-func (r Repository) Create(ctx context.Context, id, kode, nama string, isActive bool, partnerServiceID, vaPrefix, bundlePath, status string, partnerID, provisionError *string) error {
-	err := r.DB.Q(ctx).CreateMitra(ctx, store.CreateMitraParams{ID: id, KodeMitra: kode, Nama: nama, IsActive: isActive, PartnerServiceID: partnerServiceID, VaPrefix: vaPrefix, BundlePath: bundlePath, ProvisionStatus: status, ProvisionPartnerID: partnerID, ProvisionError: provisionError})
+func (r Repository) Create(ctx context.Context, id, kode, nama string, isActive bool, partnerServiceID, vaPrefix, bundlePath, status string, partnerID, provisionError *string, connectionType string, delivered bool) error {
+	err := r.DB.Q(ctx).CreateMitra(ctx, store.CreateMitraParams{ID: id, KodeMitra: kode, Nama: nama, IsActive: isActive, PartnerServiceID: partnerServiceID, VaPrefix: vaPrefix, BundlePath: bundlePath, ProvisionStatus: status, ProvisionPartnerID: partnerID, ProvisionError: provisionError, ConnectionType: connectionType, CredentialsDelivered: delivered})
 	if postgres.IsUnique(err, "kode_mitra") {
 		return domain.ErrKodeMitraTaken
 	}
@@ -77,7 +78,7 @@ func (r Repository) GetByKode(ctx context.Context, kode string) (domain.Mitra, e
 }
 
 func (r Repository) Update(ctx context.Context, id string, c domain.Changes) error {
-	err := r.DB.Q(ctx).UpdateMitra(ctx, store.UpdateMitraParams{ID: id, KodeMitra: c.KodeMitra, Nama: c.Nama, IsActive: c.IsActive})
+	err := r.DB.Q(ctx).UpdateMitra(ctx, store.UpdateMitraParams{ID: id, KodeMitra: c.KodeMitra, Nama: c.Nama, IsActive: c.IsActive, ConnectionType: c.ConnectionType})
 	if postgres.IsUnique(err, "kode_mitra") {
 		return domain.ErrKodeMitraTaken
 	}
@@ -90,4 +91,8 @@ func (r Repository) SetActive(ctx context.Context, id string, active bool) error
 
 func (r Repository) RevokeSessions(ctx context.Context, mitraID string) error {
 	return r.DB.Q(ctx).RevokeMitraFamilies(ctx, &mitraID)
+}
+
+func (r Repository) MarkReady(ctx context.Context, id string, delivered bool) error {
+	return r.DB.Q(ctx).MarkMitraReady(ctx, store.MarkMitraReadyParams{ID: id, CredentialsDelivered: delivered})
 }

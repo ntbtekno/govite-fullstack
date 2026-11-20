@@ -1,6 +1,7 @@
 package infrastructure
 
 import (
+	"bytes"
 	"context"
 	"crypto/rsa"
 	"crypto/x509"
@@ -328,6 +329,80 @@ func TestProvisionerRejectsIncompleteBundleAfterWrites(t *testing.T) {
 	var pe *domain.ProvisionError
 	if !errors.As(err, &pe) || pe.PartnerID != "P-COMPLETE" || !strings.Contains(pe.Detail, "hmac.secret") {
 		t.Fatalf("expected incomplete bundle error, got %T %v", err, err)
+	}
+}
+
+func TestReplaceSecretLeavesIdentityAndPrivateKeyUntouched(t *testing.T) {
+	dir := t.TempDir()
+	bundle := filepath.Join(dir, "107")
+	if err := os.Mkdir(bundle, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	partner := []byte(`{"partnerId":"P-107","clientId":"107"}`)
+	privateKey := []byte("private-key-fixture")
+	for name, content := range map[string][]byte{
+		"partner.json": partner, "hmac.secret": []byte("old-fixture"), "private.pem": privateKey,
+	} {
+		if err := os.WriteFile(filepath.Join(bundle, name), content, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p, err := NewProvisioner(Config{SecretsDir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.ReplaceSecret("107", []byte("new-fixture")); err != nil {
+		t.Fatal(err)
+	}
+	gotPartner, _ := os.ReadFile(filepath.Join(bundle, "partner.json"))
+	gotPrivate, _ := os.ReadFile(filepath.Join(bundle, "private.pem"))
+	gotSecret, _ := os.ReadFile(filepath.Join(bundle, "hmac.secret"))
+	if !bytes.Equal(gotPartner, partner) || !bytes.Equal(gotPrivate, privateKey) || string(gotSecret) != "new-fixture" {
+		t.Fatal("rotation changed identity/private key or failed to replace secret")
+	}
+	if mode, _ := filePerm(filepath.Join(bundle, "hmac.secret")); mode&0o077 != 0 {
+		t.Fatalf("hmac.secret permission = %v", mode)
+	}
+}
+
+func TestRotateSecretUsesPartnerPathAndClientSecret(t *testing.T) {
+	var gotMethod, gotPath, gotUser, gotPass string
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.EscapedPath()
+		gotUser, gotPass, _ = r.BasicAuth()
+		_ = json.NewEncoder(w).Encode(map[string]string{"clientSecret": "rotated-fixture"})
+	}))
+	defer gateway.Close()
+	p, err := NewProvisioner(Config{BaseURL: gateway.URL, SecretsDir: t.TempDir(), AdminUsername: "admin", AdminPassword: "password", HTTPClient: gateway.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := p.RotateSecret(context.Background(), "107", "partner/107")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodPost || gotPath != "/admin/v1/partners/partner%2F107/rotate-secret" || gotUser != "admin" || gotPass != "password" {
+		t.Fatalf("unexpected rotate request: %s %s %s/%s", gotMethod, gotPath, gotUser, gotPass)
+	}
+	if string(result.ClientSecret) != "rotated-fixture" {
+		t.Fatalf("unexpected rotated secret result")
+	}
+}
+
+func TestRotateSecretPropagatesGatewayError(t *testing.T) {
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"responseCode":"4000500","responseMessage":"Rotation rejected"}`)
+	}))
+	defer gateway.Close()
+	p, err := NewProvisioner(Config{BaseURL: gateway.URL, SecretsDir: t.TempDir(), HTTPClient: gateway.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = p.RotateSecret(context.Background(), "107", "P-107")
+	var ke *kernel.Error
+	if err == nil || !errors.As(err, &ke) || !strings.Contains(ke.Detail, "4000500") || !strings.Contains(ke.Detail, "Rotation rejected") {
+		t.Fatalf("gateway error not propagated: %v", err)
 	}
 }
 

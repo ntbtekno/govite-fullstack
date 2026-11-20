@@ -18,6 +18,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -148,7 +149,76 @@ func (p *Provisioner) Provision(ctx context.Context, kode string, in domain.Prov
 			Cause:     domain.ErrProvisionFailed,
 		}
 	}
-	return domain.ProvisionResult{PartnerID: partnerID, ClientID: clientID}, nil
+	return domain.ProvisionResult{
+		PartnerID: partnerID, ClientID: clientID, GatewayBaseURL: p.baseURL,
+		ClientSecret: secret, PrivateKeyPEM: privatePEM,
+	}, nil
+}
+
+// RotateSecret calls the gateway's confirmed admin rotation endpoint. The
+// response exposes clientSecret once; the caller immediately replaces the
+// local bundle file and never logs or returns the value from this layer.
+func (p *Provisioner) RotateSecret(ctx context.Context, _ string, partnerID string) (domain.RotateResult, error) {
+	if p.baseURL == "" || p.secretsDir == "" {
+		return domain.RotateResult{}, domain.ErrSNAPNotConfigured
+	}
+	if partnerID == "" {
+		return domain.RotateResult{}, domain.ErrProvisionFailed.WithDetail("rotate: partnerId kosong")
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, regTimeout)
+	defer cancel()
+	path := "/admin/v1/partners/" + url.PathEscape(partnerID) + "/rotate-secret"
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, p.baseURL+path, nil)
+	if err != nil {
+		return domain.RotateResult{}, domain.ErrProvisionFailed.WithDetail("build rotate request: " + err.Error())
+	}
+	req.SetBasicAuth(p.adminUser, p.adminPass)
+	req.Header.Set("Content-Type", "application/json")
+	res, err := p.http.Do(req)
+	if err != nil {
+		return domain.RotateResult{}, domain.ErrProvisionFailed.WithDetail("rotate: " + err.Error())
+	}
+	defer res.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	if err != nil {
+		return domain.RotateResult{}, domain.ErrProvisionFailed.WithDetail("read rotate response: " + err.Error())
+	}
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		var gatewayErr struct {
+			ResponseCode    string `json:"responseCode"`
+			ResponseMessage string `json:"responseMessage"`
+		}
+		if json.Unmarshal(raw, &gatewayErr) == nil && (gatewayErr.ResponseCode != "" || gatewayErr.ResponseMessage != "") {
+			slog.ErrorContext(reqCtx, "gateway partner secret rotation rejected", "status", res.StatusCode, "responseCode", gatewayErr.ResponseCode, "responseMessage", gatewayErr.ResponseMessage)
+			return domain.RotateResult{}, domain.ErrProvisionFailed.WithDetail(fmt.Sprintf("gateway rotate responded %d (%s: %s)", res.StatusCode, gatewayErr.ResponseCode, gatewayErr.ResponseMessage))
+		}
+		return domain.RotateResult{}, domain.ErrProvisionFailed.WithDetail(fmt.Sprintf("gateway rotate responded %d", res.StatusCode))
+	}
+	var response struct {
+		ClientSecret string `json:"clientSecret"`
+	}
+	if err := json.Unmarshal(raw, &response); err != nil {
+		return domain.RotateResult{}, domain.ErrProvisionFailed.WithDetail("parse rotate response: " + err.Error())
+	}
+	if response.ClientSecret == "" {
+		return domain.RotateResult{}, domain.ErrProvisionFailed.WithDetail("gateway rotate response missing clientSecret")
+	}
+	return domain.RotateResult{ClientSecret: []byte(response.ClientSecret)}, nil
+}
+
+func (p *Provisioner) ReplaceSecret(kode string, secret []byte) error {
+	dir := filepath.Join(p.secretsDir, kode)
+	if err := writeAtomic(filepath.Join(dir, "hmac.secret"), secret); err != nil {
+		return err
+	}
+	if missing := incompleteBundleFile(dir); missing != "" {
+		return fmt.Errorf("bundle incomplete: %s missing or empty", missing)
+	}
+	return nil
+}
+
+func (p *Provisioner) ReadPrivateKey(kode string) ([]byte, error) {
+	return os.ReadFile(filepath.Join(p.secretsDir, kode, "private.pem"))
 }
 
 // incompleteBundleFile checks only metadata and size. It deliberately never

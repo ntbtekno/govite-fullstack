@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { Link, useNavigate } from "@tanstack/react-router"
 import { toast } from "sonner"
 import { Badge } from "@app/ui/components/badge"
 import { Button } from "@app/ui/components/button"
@@ -26,10 +27,14 @@ import { Pagination, TableState } from "@/components/list-controls"
 import { useDebounced } from "@/lib/use-debounced"
 import { PageHeader } from "@/components/page"
 import { RequirePermission } from "@/features/auth/require-permission"
+import { useAuth } from "@/lib/auth-context"
 import { mitraApi } from "@/features/mitra/api"
+import { storeCredentialDelivery } from "@/features/mitra/credential-vault"
 
 export function MitraPage() {
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
+  const auth = useAuth()
   const [page, setPage] = useState(1)
   const [limit, setLimit] = useState(20)
   const [search, setSearch] = useState("")
@@ -52,10 +57,14 @@ export function MitraPage() {
 
   const create = useMutation({
     mutationFn: mitraApi.create,
-    onSuccess: async () => {
+    onSuccess: async (result) => {
       toast.success("Mitra created")
       await invalidate()
       setCreateOpen(false)
+      if (result.credentials) {
+        storeCredentialDelivery(result.credentials)
+        await navigate({ to: "/admin/administration/mitra/$mitraId/credentials", params: { mitraId: result.mitra.id } })
+      }
     },
   })
 
@@ -94,6 +103,7 @@ export function MitraPage() {
       callbackUrl,
       rateLimitTier: "standard",
       ipWhitelist,
+      connectionType: String(form.get("connectionType")) as "PORTAL_ONLY" | "HOST_TO_HOST",
     })
   }
 
@@ -111,16 +121,24 @@ export function MitraPage() {
       <PageHeader
         title="Mitra"
         description="Tenant list. Deactivating a mitra signs its users out."
-        actions={
+        actions={auth.can("mitra", "manage") ? (
           <Dialog open={createOpen} onOpenChange={setCreateOpen}>
             <DialogTrigger asChild>
               <Button>Add mitra</Button>
             </DialogTrigger>
-            <DialogContent>
+            <DialogContent className="max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>New mitra</DialogTitle>
               </DialogHeader>
               <form id="create-mitra" onSubmit={onCreate} className="grid gap-4">
+                <div className="grid gap-2">
+                  <Label htmlFor="connectionType">Connection type</Label>
+                  <select id="connectionType" name="connectionType" required defaultValue="" className="h-9 rounded-md border bg-background px-3 text-sm">
+                    <option value="" disabled>Select connection type</option>
+                    <option value="PORTAL_ONLY">Portal only</option>
+                    <option value="HOST_TO_HOST">Host to host</option>
+                  </select>
+                </div>
                 <div className="grid gap-2">
                   <Label htmlFor="kodeMitra">Kode mitra</Label>
                   <Input
@@ -193,6 +211,7 @@ export function MitraPage() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
+        ) : null
         }
       />
 
@@ -212,12 +231,13 @@ export function MitraPage() {
             <TableHead>Kode</TableHead>
             <TableHead>Nama</TableHead>
             <TableHead>Status</TableHead>
+            <TableHead>Connection</TableHead>
             <TableHead className="text-right">Actions</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           <TableState
-            colSpan={4}
+            colSpan={5}
             loading={mitra.isPending}
             empty={mitra.data?.data.length === 0}
             error={mitra.error}
@@ -232,7 +252,11 @@ export function MitraPage() {
                   {row.isActive ? "Active" : "Inactive"}
                 </Badge>
               </TableCell>
+              <TableCell>{row.connectionType === "HOST_TO_HOST" ? "Host to host" : "Portal only"}</TableCell>
               <TableCell className="space-x-2 text-right">
+                <Button asChild variant="ghost" size="sm">
+                  <Link to="/admin/administration/mitra/$mitraId" params={{ mitraId: row.id }}>View</Link>
+                </Button>
                 <Button
                   variant="ghost"
                   size="sm"

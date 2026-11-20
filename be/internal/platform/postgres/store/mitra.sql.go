@@ -22,21 +22,23 @@ func (q *Queries) CountMitra(ctx context.Context, search *string) (int64, error)
 }
 
 const createMitra = `-- name: CreateMitra :exec
-INSERT INTO "mitra" (id, kode_mitra, nama, is_active, partner_service_id, va_prefix, bundle_path, provision_status, provision_partner_id, provision_error)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+INSERT INTO "mitra" (id, kode_mitra, nama, is_active, partner_service_id, va_prefix, bundle_path, provision_status, provision_partner_id, provision_error, connection_type, credentials_delivered)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::text, $12::boolean)
 `
 
 type CreateMitraParams struct {
-	ID                 string
-	KodeMitra          string
-	Nama               string
-	IsActive           bool
-	PartnerServiceID   string
-	VaPrefix           string
-	BundlePath         string
-	ProvisionStatus    string
-	ProvisionPartnerID *string
-	ProvisionError     *string
+	ID                   string
+	KodeMitra            string
+	Nama                 string
+	IsActive             bool
+	PartnerServiceID     string
+	VaPrefix             string
+	BundlePath           string
+	ProvisionStatus      string
+	ProvisionPartnerID   *string
+	ProvisionError       *string
+	ConnectionType       string
+	CredentialsDelivered bool
 }
 
 func (q *Queries) CreateMitra(ctx context.Context, arg CreateMitraParams) error {
@@ -51,12 +53,14 @@ func (q *Queries) CreateMitra(ctx context.Context, arg CreateMitraParams) error 
 		arg.ProvisionStatus,
 		arg.ProvisionPartnerID,
 		arg.ProvisionError,
+		arg.ConnectionType,
+		arg.CredentialsDelivered,
 	)
 	return err
 }
 
 const getMitraByID = `-- name: GetMitraByID :one
-SELECT id, kode_mitra, nama, is_active, created_at, partner_service_id, va_prefix, bundle_path, provision_status, provision_partner_id, provision_error FROM "mitra" WHERE id = $1
+SELECT id, kode_mitra, nama, is_active, created_at, partner_service_id, va_prefix, bundle_path, provision_status, provision_partner_id, provision_error, connection_type, credentials_delivered FROM "mitra" WHERE id = $1
 `
 
 func (q *Queries) GetMitraByID(ctx context.Context, id string) (Mitra, error) {
@@ -74,12 +78,14 @@ func (q *Queries) GetMitraByID(ctx context.Context, id string) (Mitra, error) {
 		&i.ProvisionStatus,
 		&i.ProvisionPartnerID,
 		&i.ProvisionError,
+		&i.ConnectionType,
+		&i.CredentialsDelivered,
 	)
 	return i, err
 }
 
 const getMitraByKode = `-- name: GetMitraByKode :one
-SELECT id, kode_mitra, nama, is_active, created_at, partner_service_id, va_prefix, bundle_path, provision_status, provision_partner_id, provision_error FROM "mitra" WHERE kode_mitra = $1
+SELECT id, kode_mitra, nama, is_active, created_at, partner_service_id, va_prefix, bundle_path, provision_status, provision_partner_id, provision_error, connection_type, credentials_delivered FROM "mitra" WHERE kode_mitra = $1
 `
 
 func (q *Queries) GetMitraByKode(ctx context.Context, kodeMitra string) (Mitra, error) {
@@ -97,12 +103,14 @@ func (q *Queries) GetMitraByKode(ctx context.Context, kodeMitra string) (Mitra, 
 		&i.ProvisionStatus,
 		&i.ProvisionPartnerID,
 		&i.ProvisionError,
+		&i.ConnectionType,
+		&i.CredentialsDelivered,
 	)
 	return i, err
 }
 
 const listMitra = `-- name: ListMitra :many
-SELECT id, kode_mitra, nama, is_active, created_at, partner_service_id, va_prefix, bundle_path, provision_status, provision_partner_id, provision_error FROM "mitra"
+SELECT id, kode_mitra, nama, is_active, created_at, partner_service_id, va_prefix, bundle_path, provision_status, provision_partner_id, provision_error, connection_type, credentials_delivered FROM "mitra"
 WHERE ($1::text IS NULL OR nama ILIKE '%' || $1 || '%' OR kode_mitra ILIKE '%' || $1 || '%')
 ORDER BY created_at DESC
 LIMIT $3 OFFSET $2
@@ -135,6 +143,8 @@ func (q *Queries) ListMitra(ctx context.Context, arg ListMitraParams) ([]Mitra, 
 			&i.ProvisionStatus,
 			&i.ProvisionPartnerID,
 			&i.ProvisionError,
+			&i.ConnectionType,
+			&i.CredentialsDelivered,
 		); err != nil {
 			return nil, err
 		}
@@ -163,6 +173,22 @@ func (q *Queries) MarkMitraNeedsRepair(ctx context.Context, arg MarkMitraNeedsRe
 	return err
 }
 
+const markMitraReady = `-- name: MarkMitraReady :exec
+UPDATE "mitra"
+SET provision_status = 'READY', provision_error = NULL, credentials_delivered = $2
+WHERE id = $1
+`
+
+type MarkMitraReadyParams struct {
+	ID                   string
+	CredentialsDelivered bool
+}
+
+func (q *Queries) MarkMitraReady(ctx context.Context, arg MarkMitraReadyParams) error {
+	_, err := q.db.Exec(ctx, markMitraReady, arg.ID, arg.CredentialsDelivered)
+	return err
+}
+
 const setMitraActive = `-- name: SetMitraActive :exec
 UPDATE "mitra" SET is_active = $2 WHERE id = $1
 `
@@ -181,15 +207,21 @@ const updateMitra = `-- name: UpdateMitra :exec
 UPDATE "mitra" SET
   kode_mitra = COALESCE($1, kode_mitra),
   nama = COALESCE($2, nama),
-  is_active = COALESCE($3, is_active)
-WHERE id = $4
+  is_active = COALESCE($3, is_active),
+  connection_type = COALESCE($4, connection_type),
+  credentials_delivered = CASE
+    WHEN $4::text = 'HOST_TO_HOST' AND connection_type = 'PORTAL_ONLY' THEN FALSE
+    ELSE credentials_delivered
+  END
+WHERE id = $5
 `
 
 type UpdateMitraParams struct {
-	KodeMitra *string
-	Nama      *string
-	IsActive  *bool
-	ID        string
+	KodeMitra      *string
+	Nama           *string
+	IsActive       *bool
+	ConnectionType *string
+	ID             string
 }
 
 func (q *Queries) UpdateMitra(ctx context.Context, arg UpdateMitraParams) error {
@@ -197,6 +229,7 @@ func (q *Queries) UpdateMitra(ctx context.Context, arg UpdateMitraParams) error 
 		arg.KodeMitra,
 		arg.Nama,
 		arg.IsActive,
+		arg.ConnectionType,
 		arg.ID,
 	)
 	return err

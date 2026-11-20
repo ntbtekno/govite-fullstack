@@ -6,7 +6,9 @@ import {
 } from "@/lib/authed-request"
 import type {
   CreateMitraRequest,
+  CreateMitraResponse,
   MitraResponse,
+  RotateMitraResponse,
   UpdateMitraRequest,
 } from "@app/contracts"
 
@@ -14,7 +16,7 @@ export const mitraApi = {
   list: (p: ListParams) => authedPage<MitraResponse>(`/mitra?${qs({ ...p })}`),
   get: (id: string) => authedRequest<MitraResponse>(`/mitra/${id}`),
   create: (body: CreateMitraRequest) =>
-    authedRequest<MitraResponse, CreateMitraRequest>("/mitra", {
+    authedRequest<CreateMitraResponse, CreateMitraRequest>("/mitra", {
       method: "POST",
       body,
     }),
@@ -28,4 +30,8 @@ export const mitraApi = {
       `/mitra/${id}/active`,
       { method: "PATCH", body: { isActive } }
     ),
+  rotateSecret: (id: string) =>
+    authedRequest<RotateMitraResponse>(`/mitra/${id}/rotate-secret`, {
+      method: "POST",
+    }),
 }

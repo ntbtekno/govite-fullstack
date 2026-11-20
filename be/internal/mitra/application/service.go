@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -37,7 +38,21 @@ func (s *Service) List(ctx context.Context, f domain.Filter, limit, offset int32
 }
 
 func (s *Service) Get(ctx context.Context, id string) (domain.Mitra, error) {
-	return s.Repo.Get(ctx, id)
+	mitra, err := s.Repo.Get(ctx, id)
+	if err != nil {
+		return domain.Mitra{}, err
+	}
+	mitra.BundleCompleteness = &domain.BundleCompleteness{
+		PartnerJSON: nonEmptyFile(filepath.Join(mitra.BundlePath, "partner.json")),
+		HMACSecret:  nonEmptyFile(filepath.Join(mitra.BundlePath, "hmac.secret")),
+		PrivatePEM:  nonEmptyFile(filepath.Join(mitra.BundlePath, "private.pem")),
+	}
+	return mitra, nil
+}
+
+func nonEmptyFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular() && info.Size() > 0
 }
 
 // CreateInput is the superadmin's request to create one mitra. Every field is
@@ -51,16 +66,32 @@ type CreateInput struct {
 	CallbackUrl      *string  `json:"callbackUrl" validate:"omitempty,url"`
 	RateLimitTier    string   `json:"rateLimitTier" validate:"required,oneof=standard"`
 	IPWhitelist      []string `json:"ipWhitelist" validate:"omitempty,dive,ip"`
+	ConnectionType   string   `json:"connectionType" validate:"required,oneof=PORTAL_ONLY HOST_TO_HOST"`
 }
 
-func (s *Service) Create(ctx context.Context, in CreateInput) (domain.Mitra, error) {
+type CredentialDelivery struct {
+	PartnerID        string `json:"partnerId"`
+	ClientID         string `json:"clientId"`
+	PartnerServiceID string `json:"partnerServiceId"`
+	VAPrefix         string `json:"vaPrefix"`
+	GatewayBaseURL   string `json:"gatewayBaseUrl"`
+	ClientSecret     string `json:"clientSecret"`
+	PrivateKeyPEM    string `json:"privateKeyPem"`
+}
+
+type CreateResult struct {
+	Mitra       domain.Mitra        `json:"mitra"`
+	Credentials *CredentialDelivery `json:"credentials,omitempty"`
+}
+
+func (s *Service) Create(ctx context.Context, in CreateInput) (CreateResult, error) {
 	if err := validateCreate(in); err != nil {
-		return domain.Mitra{}, err
+		return CreateResult{}, err
 	}
 	if _, err := s.Repo.GetByKode(ctx, in.KodeMitra); err == nil {
-		return domain.Mitra{}, domain.ErrKodeMitraTaken
+		return CreateResult{}, domain.ErrKodeMitraTaken
 	} else if !errors.Is(err, domain.ErrNotFound) {
-		return domain.Mitra{}, err
+		return CreateResult{}, err
 	}
 
 	var provision domain.ProvisionResult
@@ -78,10 +109,10 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (domain.Mitra, err
 		if err != nil {
 			if pe, ok := err.(*domain.ProvisionError); ok && pe.PartnerID != "" {
 				if m, repairErr := s.recordNeedsRepair(ctx, in, pe.PartnerID, pe.Detail); repairErr == nil {
-					return m, &domain.NeedsRepairError{Mitra: m, Cause: err}
+					return CreateResult{Mitra: m}, &domain.NeedsRepairError{Mitra: m, Cause: err}
 				}
 			}
-			return domain.Mitra{}, err
+			return CreateResult{}, err
 		}
 	}
 
@@ -91,16 +122,29 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (domain.Mitra, err
 		if provision.PartnerID != "" {
 			partnerID = &provision.PartnerID
 		}
-		return s.Repo.Create(ctx, id, in.KodeMitra, in.Nama, true, in.PartnerServiceID, in.VAPrefix, filepath.Join(s.SecretsDir, in.KodeMitra), "READY", partnerID, nil)
+		return s.Repo.Create(ctx, id, in.KodeMitra, in.Nama, true, in.PartnerServiceID, in.VAPrefix, filepath.Join(s.SecretsDir, in.KodeMitra), "READY", partnerID, nil, in.ConnectionType, in.ConnectionType == domain.ConnectionHostToHost)
 	}); err != nil {
 		if provision.PartnerID != "" {
 			if m, repairErr := s.recordNeedsRepair(ctx, in, provision.PartnerID, err.Error()); repairErr == nil {
-				return m, &domain.NeedsRepairError{Mitra: m, Cause: err}
+				return CreateResult{Mitra: m}, &domain.NeedsRepairError{Mitra: m, Cause: err}
 			}
 		}
-		return domain.Mitra{}, err
+		return CreateResult{}, err
 	}
-	return s.Repo.Get(ctx, id)
+	mitra, err := s.Repo.Get(ctx, id)
+	if err != nil {
+		return CreateResult{}, err
+	}
+	result := CreateResult{Mitra: mitra}
+	if in.ConnectionType == domain.ConnectionHostToHost {
+		result.Credentials = &CredentialDelivery{
+			PartnerID: provision.PartnerID, ClientID: provision.ClientID,
+			PartnerServiceID: in.PartnerServiceID, VAPrefix: in.VAPrefix,
+			GatewayBaseURL: provision.GatewayBaseURL,
+			ClientSecret:   string(provision.ClientSecret), PrivateKeyPEM: string(provision.PrivateKeyPEM),
+		}
+	}
+	return result, nil
 }
 
 func (s *Service) recordNeedsRepair(ctx context.Context, in CreateInput, partnerID, detail string) (domain.Mitra, error) {
@@ -115,7 +159,7 @@ func (s *Service) recordNeedsRepair(ctx context.Context, in CreateInput, partner
 	path := filepath.Join(s.SecretsDir, in.KodeMitra)
 	if err := s.Tx.Do(ctx, func(ctx context.Context) error {
 		pid, msg := partnerID, detail
-		return s.Repo.Create(ctx, id, in.KodeMitra, in.Nama, true, in.PartnerServiceID, in.VAPrefix, path, domain.ProvisionStatusNeedsRepair, &pid, &msg)
+		return s.Repo.Create(ctx, id, in.KodeMitra, in.Nama, true, in.PartnerServiceID, in.VAPrefix, path, domain.ProvisionStatusNeedsRepair, &pid, &msg, in.ConnectionType, false)
 	}); err != nil {
 		return domain.Mitra{}, err
 	}
@@ -150,6 +194,9 @@ func validateCreate(in CreateInput) error {
 	if in.RateLimitTier != "standard" {
 		return validation("rateLimitTier: harus standard")
 	}
+	if in.ConnectionType != domain.ConnectionPortalOnly && in.ConnectionType != domain.ConnectionHostToHost {
+		return validation("connectionType: harus PORTAL_ONLY atau HOST_TO_HOST")
+	}
 	for _, ip := range in.IPWhitelist {
 		if net.ParseIP(ip) == nil {
 			if _, _, err := net.ParseCIDR(ip); err != nil {
@@ -175,9 +222,10 @@ func ipWhitelistOrEmpty(list []string) []string {
 }
 
 type UpdateInput struct {
-	KodeMitra *string `json:"kodeMitra" validate:"omitempty,min=1,max=50"`
-	Nama      *string `json:"nama" validate:"omitempty,min=1,max=200"`
-	IsActive  *bool   `json:"isActive"`
+	KodeMitra      *string `json:"kodeMitra" validate:"omitempty,min=1,max=50"`
+	Nama           *string `json:"nama" validate:"omitempty,min=1,max=200"`
+	IsActive       *bool   `json:"isActive"`
+	ConnectionType *string `json:"connectionType" validate:"omitempty,oneof=PORTAL_ONLY HOST_TO_HOST"`
 }
 
 func (s *Service) Update(ctx context.Context, id string, in UpdateInput) (domain.Mitra, error) {
@@ -185,7 +233,7 @@ func (s *Service) Update(ctx context.Context, id string, in UpdateInput) (domain
 	if err != nil {
 		return domain.Mitra{}, err
 	}
-	c := domain.Changes{KodeMitra: in.KodeMitra, Nama: in.Nama, IsActive: in.IsActive}
+	c := domain.Changes{KodeMitra: in.KodeMitra, Nama: in.Nama, IsActive: in.IsActive, ConnectionType: in.ConnectionType}
 	deactivating := in.IsActive != nil && !*in.IsActive && before.IsActive
 	err = s.Tx.Do(ctx, func(ctx context.Context) error {
 		if err := s.Repo.Update(ctx, id, c); err != nil {
@@ -204,6 +252,60 @@ func (s *Service) Update(ctx context.Context, id string, in UpdateInput) (domain
 		return domain.Mitra{}, err
 	}
 	return after, nil
+}
+
+type RotateResult struct {
+	Mitra       domain.Mitra        `json:"mitra"`
+	Credentials *CredentialDelivery `json:"credentials,omitempty"`
+}
+
+func (s *Service) RotateSecret(ctx context.Context, id string) (RotateResult, error) {
+	mitra, err := s.Repo.Get(ctx, id)
+	if err != nil {
+		return RotateResult{}, err
+	}
+	if s.Prov == nil || mitra.ProvisionPartnerID == nil {
+		return RotateResult{}, domain.ErrSNAPNotConfigured
+	}
+	rotated, err := s.Prov.RotateSecret(ctx, mitra.KodeMitra, *mitra.ProvisionPartnerID)
+	if err != nil {
+		if !errors.Is(err, domain.ErrRotateContractMissing) {
+			_ = s.Repo.MarkNeedsRepair(ctx, id, *mitra.ProvisionPartnerID, err.Error())
+		}
+		return RotateResult{}, err
+	}
+	if err := s.Prov.ReplaceSecret(mitra.KodeMitra, rotated.ClientSecret); err != nil {
+		detail := "write rotated hmac.secret: " + err.Error()
+		_ = s.Repo.MarkNeedsRepair(ctx, id, *mitra.ProvisionPartnerID, detail)
+		return RotateResult{}, domain.ErrProvisionFailed.WithDetail(detail)
+	}
+	delivered := mitra.ConnectionType == domain.ConnectionHostToHost
+	deliverPrivateKey := delivered && !mitra.CredentialsDelivered
+	if err := s.Repo.MarkReady(ctx, id, delivered); err != nil {
+		_ = s.Repo.MarkNeedsRepair(ctx, id, *mitra.ProvisionPartnerID, "persist rotated credential state: "+err.Error())
+		return RotateResult{}, err
+	}
+	mitra, err = s.Repo.Get(ctx, id)
+	if err != nil {
+		return RotateResult{}, err
+	}
+	result := RotateResult{Mitra: mitra}
+	if delivered {
+		var privateKey string
+		if deliverPrivateKey {
+			privateRaw, readErr := s.Prov.ReadPrivateKey(mitra.KodeMitra)
+			if readErr != nil {
+				return RotateResult{}, domain.ErrProvisionFailed.WithDetail("read private.pem for first H2H delivery: " + readErr.Error())
+			}
+			privateKey = string(privateRaw)
+		}
+		result.Credentials = &CredentialDelivery{
+			PartnerID: *mitra.ProvisionPartnerID, ClientID: mitra.KodeMitra,
+			PartnerServiceID: mitra.PartnerServiceID, VAPrefix: mitra.VAPrefix,
+			ClientSecret: string(rotated.ClientSecret), PrivateKeyPEM: privateKey,
+		}
+	}
+	return result, nil
 }
 
 type ActiveInput struct {

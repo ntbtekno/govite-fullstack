@@ -7,35 +7,50 @@ import (
 	"govite/internal/kernel"
 )
 
-const ProvisionStatusNeedsRepair = "NEEDS_REPAIR"
+const (
+	ProvisionStatusNeedsRepair = "NEEDS_REPAIR"
+	ConnectionPortalOnly       = "PORTAL_ONLY"
+	ConnectionHostToHost       = "HOST_TO_HOST"
+)
 
 var (
-	ErrNotFound          = kernel.E(kernel.NotFound, "MITRA_NOT_FOUND", "Mitra tidak ditemukan")
-	ErrKodeMitraTaken    = kernel.E(kernel.Conflict, "KODE_MITRA_TAKEN", "Kode mitra sudah digunakan")
-	ErrBundleExists      = kernel.E(kernel.Conflict, "BUNDLE_EXISTS", "Bundle mitra sudah ada")
-	ErrSNAPNotConfigured = kernel.E(kernel.Unavailable, "SNAP_NOT_CONFIGURED", "SNAP gateway belum dikonfigurasi")
-	ErrProvisionFailed   = kernel.E(kernel.Unavailable, "PROVISION_FAILED", "Gagal menyediakan kredensial mitra")
+	ErrNotFound              = kernel.E(kernel.NotFound, "MITRA_NOT_FOUND", "Mitra tidak ditemukan")
+	ErrKodeMitraTaken        = kernel.E(kernel.Conflict, "KODE_MITRA_TAKEN", "Kode mitra sudah digunakan")
+	ErrBundleExists          = kernel.E(kernel.Conflict, "BUNDLE_EXISTS", "Bundle mitra sudah ada")
+	ErrSNAPNotConfigured     = kernel.E(kernel.Unavailable, "SNAP_NOT_CONFIGURED", "SNAP gateway belum dikonfigurasi")
+	ErrProvisionFailed       = kernel.E(kernel.Unavailable, "PROVISION_FAILED", "Gagal menyediakan kredensial mitra")
+	ErrRotateContractMissing = kernel.E(kernel.Unavailable, "ROTATE_CONTRACT_MISSING", "Kontrak rotasi secret gateway belum tersedia").WithDetail("gateway rotate method/path/request body tidak tersedia di OpenAPI/Swagger")
 )
 
 type Mitra struct {
-	ID                 string    `json:"id"`
-	KodeMitra          string    `json:"kodeMitra"`
-	Nama               string    `json:"nama"`
-	IsActive           bool      `json:"isActive"`
-	CreatedAt          time.Time `json:"createdAt"`
-	PartnerServiceID   string    `json:"partnerServiceId"`
-	VAPrefix           string    `json:"vaPrefix"`
-	BundlePath         string    `json:"bundlePath"`
-	ProvisionStatus    string    `json:"provisionStatus"`
-	ProvisionPartnerID *string   `json:"provisionPartnerId,omitempty"`
-	ProvisionError     *string   `json:"provisionError,omitempty"`
+	ID                   string              `json:"id"`
+	KodeMitra            string              `json:"kodeMitra"`
+	Nama                 string              `json:"nama"`
+	IsActive             bool                `json:"isActive"`
+	CreatedAt            time.Time           `json:"createdAt"`
+	PartnerServiceID     string              `json:"partnerServiceId"`
+	VAPrefix             string              `json:"vaPrefix"`
+	BundlePath           string              `json:"bundlePath"`
+	ProvisionStatus      string              `json:"provisionStatus"`
+	ProvisionPartnerID   *string             `json:"provisionPartnerId,omitempty"`
+	ProvisionError       *string             `json:"provisionError,omitempty"`
+	ConnectionType       string              `json:"connectionType"`
+	CredentialsDelivered bool                `json:"credentialsDelivered"`
+	BundleCompleteness   *BundleCompleteness `json:"bundleCompleteness,omitempty"`
+}
+
+type BundleCompleteness struct {
+	PartnerJSON bool `json:"partnerJson"`
+	HMACSecret  bool `json:"hmacSecret"`
+	PrivatePEM  bool `json:"privatePem"`
 }
 
 type Filter struct{ Search *string }
 type Changes struct {
-	KodeMitra *string
-	Nama      *string
-	IsActive  *bool
+	KodeMitra      *string
+	Nama           *string
+	IsActive       *bool
+	ConnectionType *string
 }
 
 type ProvisionInput struct {
@@ -48,8 +63,15 @@ type ProvisionInput struct {
 	IPWhitelist      []string
 }
 type ProvisionResult struct {
-	PartnerID string
-	ClientID  string
+	PartnerID      string
+	ClientID       string
+	GatewayBaseURL string `json:"-"`
+	ClientSecret   []byte `json:"-"`
+	PrivateKeyPEM  []byte `json:"-"`
+}
+
+type RotateResult struct {
+	ClientSecret []byte `json:"-"`
 }
 
 // NeedsRepairError means gateway registration succeeded but portal persistence
@@ -77,14 +99,18 @@ type Repository interface {
 	Get(context.Context, string) (Mitra, error)
 	List(context.Context, Filter, int32, int32) ([]Mitra, error)
 	Count(context.Context, Filter) (int64, error)
-	Create(context.Context, string, string, string, bool, string, string, string, string, *string, *string) error
+	Create(context.Context, string, string, string, bool, string, string, string, string, *string, *string, string, bool) error
 	MarkNeedsRepair(context.Context, string, string, string) error
 	GetByKode(context.Context, string) (Mitra, error)
 	Update(context.Context, string, Changes) error
 	SetActive(context.Context, string, bool) error
 	RevokeSessions(context.Context, string) error
+	MarkReady(context.Context, string, bool) error
 }
 
 type Provisioner interface {
 	Provision(context.Context, string, ProvisionInput) (ProvisionResult, error)
+	RotateSecret(context.Context, string, string) (RotateResult, error)
+	ReplaceSecret(string, []byte) error
+	ReadPrivateKey(string) ([]byte, error)
 }

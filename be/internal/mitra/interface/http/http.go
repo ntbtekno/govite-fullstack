@@ -66,7 +66,10 @@ func (h Handler) Routes(g rbac.Guarded) {
 			}
 			return err
 		}
-		h.audit(c, "mitra.create", v.ID, v)
+		h.audit(c, "mitra.create", v.Mitra.ID, v.Mitra)
+		if v.Credentials != nil {
+			h.audit(c, "mitra.credentials_delivered", v.Mitra.ID, fiber.Map{"kodeMitra": v.Mitra.KodeMitra})
+		}
 		return httpx.Created(c, v)
 	})
 
@@ -101,6 +104,22 @@ func (h Handler) Routes(g rbac.Guarded) {
 			return err
 		}
 		h.audit(c, "mitra.set_active", id, v)
+		return httpx.OK(c, v)
+	})
+
+	g.Post("/mitra/:id/rotate-secret", "mitra.manage", func(c *fiber.Ctx) error {
+		id, err := httpx.ID(c, "id")
+		if err != nil {
+			return err
+		}
+		v, err := h.Svc.RotateSecret(c.UserContext(), id)
+		if err != nil {
+			return err
+		}
+		h.audit(c, "mitra.secret_rotated", id, fiber.Map{"kodeMitra": v.Mitra.KodeMitra})
+		if v.Credentials != nil {
+			h.audit(c, "mitra.credentials_delivered", id, fiber.Map{"kodeMitra": v.Mitra.KodeMitra, "issuance": "rotation"})
+		}
 		return httpx.OK(c, v)
 	})
 }

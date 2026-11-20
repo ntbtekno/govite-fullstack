@@ -593,9 +593,11 @@ func TestMitraChangesAreAudited(t *testing.T) {
 		"branchCode":       "1020",
 		"rateLimitTier":    "standard",
 		"ipWhitelist":      []any{},
+		"callbackUrl":      "https://example.com/callback",
+		"connectionType":   "PORTAL_ONLY",
 	}, bearer(superTok))
 	expect(t, r, 201)
-	id := r.data()["id"].(string)
+	id := r.data()["mitra"].(map[string]any)["id"].(string)
 
 	// Rename.
 	expect(t, e.do("PUT", "/mitra/"+id, map[string]any{"nama": "Mitra Audit Baru"}, bearer(superTok)), 200)
@@ -640,10 +642,13 @@ func TestCreateMitraProvisionsBundle(t *testing.T) {
 		"branchCode":       "1010",
 		"rateLimitTier":    "standard",
 		"ipWhitelist":      []any{"127.0.0.1"},
+		"callbackUrl":      "https://example.com/callback",
+		"connectionType":   "PORTAL_ONLY",
 	}, bearer(superTok))
 	expect(t, r, 201)
-	id := r.data()["id"].(string)
-	if r.data()["kodeMitra"] != "101" || r.data()["nama"] != "Mitra Provisioned" {
+	created := r.data()["mitra"].(map[string]any)
+	id := created["id"].(string)
+	if created["kodeMitra"] != "101" || created["nama"] != "Mitra Provisioned" {
 		t.Fatalf("unexpected mitra data: %s", r.Raw)
 	}
 
@@ -719,6 +724,8 @@ func TestCreateMitraValidationRejectsBadInput(t *testing.T) {
 		"branchCode":       "1010",
 		"rateLimitTier":    "standard",
 		"ipWhitelist":      []any{"127.0.0.1"},
+		"callbackUrl":      "https://example.com/callback",
+		"connectionType":   "PORTAL_ONLY",
 	}
 	expectBad := func(t *testing.T, body map[string]any) {
 		t.Helper()
@@ -759,6 +766,8 @@ func TestCreateMitraRejectsExistingKode(t *testing.T) {
 		"branchCode":       "1010",
 		"rateLimitTier":    "standard",
 		"ipWhitelist":      []any{},
+		"callbackUrl":      "https://example.com/callback",
+		"connectionType":   "PORTAL_ONLY",
 	}, bearer(superTok))
 	expect(t, r, 409, "KODE_MITRA_TAKEN")
 }
@@ -782,6 +791,8 @@ func TestCreateMitraRejectsExistingBundle(t *testing.T) {
 		"branchCode":       "0070",
 		"rateLimitTier":    "standard",
 		"ipWhitelist":      []any{},
+		"callbackUrl":      "https://example.com/callback",
+		"connectionType":   "PORTAL_ONLY",
 	}, bearer(superTok))
 	expect(t, r, 409, "BUNDLE_EXISTS")
 }
