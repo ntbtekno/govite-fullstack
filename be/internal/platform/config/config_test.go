@@ -109,34 +109,33 @@ func TestSNAPDisabledWhenBaseURLEmpty(t *testing.T) {
 }
 
 // TestSNAPRequiresFieldsWhenBaseURLSet proves a half-configured gateway fails
-// the boot: BaseURL set but a non-secret field or a secret file path missing.
+// the boot: BaseURL set but a non-secret field or encryption key missing.
 func TestSNAPRequiresFieldsWhenBaseURLSet(t *testing.T) {
 	// Only BaseURL set: every dependent field is missing.
 	setBaseEnv(t)
 	t.Setenv("SNAP_BASE_URL", "http://127.0.0.1:8080")
 	t.Setenv("SNAP_CHANNEL_ID", "")
-	t.Setenv("SNAP_SECRETS_DIR", "")
 	t.Setenv("SNAP_ADMIN_USERNAME", "")
 	t.Setenv("SNAP_ADMIN_PASSWORD", "")
+	t.Setenv("PORTAL_SECRETS_ENCRYPTION_KEY", "")
 
 	_, err := Load()
 	if err == nil {
 		t.Fatal("a half-configured SNAP gateway must fail the boot")
 	}
-	for _, key := range []string{"SNAP_SECRETS_DIR", "SNAP_CHANNEL_ID", "SNAP_ADMIN_USERNAME", "SNAP_ADMIN_PASSWORD"} {
+	for _, key := range []string{"SNAP_CHANNEL_ID", "SNAP_ADMIN_USERNAME", "SNAP_ADMIN_PASSWORD"} {
 		if !strings.Contains(err.Error(), key) {
 			t.Fatalf("boot error must name %s, got %v", key, err)
 		}
 	}
 
-	// A complete config passes. The secret files are not read by Load; the
-	// client reads and validates them at construction.
+	// A complete config passes. Encryption key is required.
 	setBaseEnv(t)
 	t.Setenv("SNAP_BASE_URL", "http://127.0.0.1:8080")
 	t.Setenv("SNAP_CHANNEL_ID", "02030")
-	t.Setenv("SNAP_SECRETS_DIR", "/tmp/snap-secrets")
 	t.Setenv("SNAP_ADMIN_USERNAME", "snap-admin")
 	t.Setenv("SNAP_ADMIN_PASSWORD", "snap-admin-secret")
+	t.Setenv("PORTAL_SECRETS_ENCRYPTION_KEY", "test-encryption-key-do-not-use-in-production-32")
 	t.Setenv("SNAP_ORIGIN", "")
 
 	cfg, err := Load()
@@ -154,9 +153,9 @@ func TestSNAPBaseURLTrailingSlashTrimmed(t *testing.T) {
 	setBaseEnv(t)
 	t.Setenv("SNAP_BASE_URL", "http://127.0.0.1:8080/")
 	t.Setenv("SNAP_CHANNEL_ID", "02030")
-	t.Setenv("SNAP_SECRETS_DIR", "/tmp/snap-secrets")
 	t.Setenv("SNAP_ADMIN_USERNAME", "snap-admin")
 	t.Setenv("SNAP_ADMIN_PASSWORD", "snap-admin-secret")
+	t.Setenv("PORTAL_SECRETS_ENCRYPTION_KEY", "test-encryption-key-do-not-use-in-production-32")
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)

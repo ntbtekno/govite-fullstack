@@ -15,15 +15,20 @@ type Repository struct {
 
 func (r Repository) toMitra(m store.Mitra) domain.Mitra {
 	return domain.Mitra{
-		ID:               m.ID,
-		KodeMitra:        m.KodeMitra,
-		Nama:             m.Nama,
-		IsActive:         m.IsActive,
-		CreatedAt:        m.CreatedAt,
-		PartnerServiceID: m.PartnerServiceID, VAPrefix: m.VaPrefix,
-		BundlePath: m.BundlePath, ProvisionStatus: m.ProvisionStatus,
-		ProvisionPartnerID: m.ProvisionPartnerID, ProvisionError: m.ProvisionError,
-		ConnectionType: m.ConnectionType, CredentialsDelivered: m.CredentialsDelivered,
+		ID:                   m.ID,
+		KodeMitra:            m.KodeMitra,
+		Nama:                 m.Nama,
+		IsActive:             m.IsActive,
+		CreatedAt:            m.CreatedAt,
+		PartnerServiceID:     m.PartnerServiceID,
+		VAPrefix:             m.VaPrefix,
+		ProvisionStatus:      m.ProvisionStatus,
+		ProvisionPartnerID:   m.ProvisionPartnerID,
+		ProvisionError:       m.ProvisionError,
+		ConnectionType:       m.ConnectionType,
+		CredentialsDelivered: m.CredentialsDelivered,
+		HMACSecretEncrypted:  m.HmacSecretEncrypted,
+		PrivateKeyEncrypted:  m.PrivateKeyEncrypted,
 	}
 }
 
@@ -54,8 +59,8 @@ func (r Repository) Count(ctx context.Context, f domain.Filter) (int64, error) {
 	return r.DB.Q(ctx).CountMitra(ctx, f.Search)
 }
 
-func (r Repository) Create(ctx context.Context, id, kode, nama string, isActive bool, partnerServiceID, vaPrefix, bundlePath, status string, partnerID, provisionError *string, connectionType string, delivered bool) error {
-	err := r.DB.Q(ctx).CreateMitra(ctx, store.CreateMitraParams{ID: id, KodeMitra: kode, Nama: nama, IsActive: isActive, PartnerServiceID: partnerServiceID, VaPrefix: vaPrefix, BundlePath: bundlePath, ProvisionStatus: status, ProvisionPartnerID: partnerID, ProvisionError: provisionError, ConnectionType: connectionType, CredentialsDelivered: delivered})
+func (r Repository) Create(ctx context.Context, id, kode, nama string, isActive bool, partnerServiceID, vaPrefix, bundlePath, status string, partnerID, provisionError *string, connectionType string, delivered bool, hmacSecretEncrypted, privateKeyEncrypted *string) error {
+	err := r.DB.Q(ctx).CreateMitra(ctx, store.CreateMitraParams{ID: id, KodeMitra: kode, Nama: nama, IsActive: isActive, PartnerServiceID: partnerServiceID, VaPrefix: vaPrefix, BundlePath: bundlePath, ProvisionStatus: status, ProvisionPartnerID: partnerID, ProvisionError: provisionError, ConnectionType: connectionType, CredentialsDelivered: delivered, HmacSecretEncrypted: hmacSecretEncrypted, PrivateKeyEncrypted: privateKeyEncrypted})
 	if postgres.IsUnique(err, "kode_mitra") {
 		return domain.ErrKodeMitraTaken
 	}
@@ -95,4 +100,22 @@ func (r Repository) RevokeSessions(ctx context.Context, mitraID string) error {
 
 func (r Repository) MarkReady(ctx context.Context, id string, delivered bool) error {
 	return r.DB.Q(ctx).MarkMitraReady(ctx, store.MarkMitraReadyParams{ID: id, CredentialsDelivered: delivered})
+}
+
+func (r Repository) SaveEncryptedCredentials(ctx context.Context, id, hmacSecretEncrypted, privateKeyEncrypted string) error {
+	return r.DB.Q(ctx).SaveMitraEncryptedCredentials(ctx, store.SaveMitraEncryptedCredentialsParams{ID: id, HmacSecretEncrypted: &hmacSecretEncrypted, PrivateKeyEncrypted: &privateKeyEncrypted})
+}
+
+func (r Repository) GetEncryptedCredentials(ctx context.Context, id string) (hmacSecretEncrypted, privateKeyEncrypted string, err error) {
+	row, err := r.DB.Q(ctx).GetMitraEncryptedCredentials(ctx, id)
+	if err != nil {
+		return "", "", err
+	}
+	if row.HmacSecretEncrypted != nil {
+		hmacSecretEncrypted = *row.HmacSecretEncrypted
+	}
+	if row.PrivateKeyEncrypted != nil {
+		privateKeyEncrypted = *row.PrivateKeyEncrypted
+	}
+	return hmacSecretEncrypted, privateKeyEncrypted, nil
 }

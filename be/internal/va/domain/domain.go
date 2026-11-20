@@ -168,3 +168,10 @@ type Gateway interface {
 	// Enabled reports whether the gateway is configured.
 	Enabled() bool
 }
+
+// CredentialLoader returns decrypted credentials for one mitra kode. It is
+// implemented by the mitra service and used by the VA signing client to load
+// credentials from the database instead of files. The returned secret and
+// private key PEM are plaintext in backend memory only and must never be
+// logged or sent to the frontend.
+type CredentialLoader func(ctx context.Context, kode string) (partnerID, clientID, secret, privateKeyPEM string, err error)

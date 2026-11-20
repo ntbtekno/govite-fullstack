@@ -86,6 +86,8 @@ type Mitra struct {
 	ProvisionError       *string
 	ConnectionType       string
 	CredentialsDelivered bool
+	HmacSecretEncrypted  *string
+	PrivateKeyEncrypted  *string
 }
 
 type Notification struct {

@@ -94,6 +94,12 @@ type Deps struct {
 	// MitraProv is the mitra auto-provisioner. Nil when SNAP_BASE_URL is unset
 	// (mitra creation then skips bundle provisioning).
 	MitraProv mitradomain.Provisioner
+	// MitraApp is the mitra application service, built in cmd/api so it can
+	// share a credential loader with the SNAP VA client.
+	MitraApp *mitraapp.Service
+	// Cipher encrypts/decrypts at-rest mitra credentials. Built from
+	// PORTAL_SECRETS_ENCRYPTION_KEY in cmd/api.
+	Cipher *crypto.SecretBox
 }
 
 // LoginAttempt is one line's metadata, re-exported so cmd/api does not import
@@ -202,7 +208,10 @@ func wire(d Deps) (handlers, *sysapp.Service) {
 
 	integrations := &intapp.Service{Repo: intinfra.Repository{DB: db}, Audit: auditor, Token: crypto.RandomToken, MidtransServerKey: d.Cfg.MidtransServerKey}
 
-	mitra := &mitraapp.Service{Repo: mitrainfra.Repository{DB: db}, Tx: db, Prov: d.MitraProv, SecretsDir: d.Cfg.SNAPSecretsDir}
+	mitra := d.MitraApp
+	if mitra == nil {
+		mitra = &mitraapp.Service{Repo: mitrainfra.Repository{DB: db}, Tx: db, Prov: d.MitraProv, Encryptor: d.Cipher}
+	}
 
 	reports := &reportsapp.Service{
 		Repo:      reportsinfra.NewRepository(d.ReportsDB),

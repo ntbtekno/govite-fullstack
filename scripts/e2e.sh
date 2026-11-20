@@ -22,16 +22,10 @@ export DATABASE_URL="${DATABASE_URL:-postgres://app:app@localhost:5436/app_test?
 export REPORTS_MYSQL_DSN="${REPORTS_MYSQL_DSN:-}"
 export JWT_ACCESS_SECRET="${JWT_ACCESS_SECRET:-$(printf 's%.0s' {1..32})}"
 export REFRESH_TOKEN_PEPPER="${REFRESH_TOKEN_PEPPER:-$(printf 'p%.0s' {1..16})}"
+export PORTAL_SECRETS_ENCRYPTION_KEY="${PORTAL_SECRETS_ENCRYPTION_KEY:-e2e-encryption-key-do-not-use-in-production-32}"
 export WEB_URL="http://localhost:4173" LOG_LEVEL=silent APP_PORT="$port"
 export THROTTLE_LIMIT=100000 LOGIN_THROTTLE_LIMIT=100000 CAPTCHA_THROTTLE_LIMIT=100000
-snap_secrets="$(mktemp -d)"
-mkdir -m 700 "$snap_secrets/010"
-printf '%s' '{"partnerId":"e2e-partner","clientId":"e2e-client"}' > "$snap_secrets/010/partner.json"
-printf '%s' 'e2e-only-hmac-secret' > "$snap_secrets/010/hmac.secret"
-openssl genrsa -out "$snap_secrets/010/private.pem" 2048 >/dev/null 2>&1
-chmod 600 "$snap_secrets/010/partner.json" "$snap_secrets/010/hmac.secret" "$snap_secrets/010/private.pem"
-export SNAP_BASE_URL="http://127.0.0.1:18080" SNAP_SECRETS_DIR="$snap_secrets" SNAP_CHANNEL_ID=02030
-export E2E_SNAP_SECRETS_DIR="$snap_secrets"
+export SNAP_BASE_URL="http://127.0.0.1:18080" SNAP_CHANNEL_ID=02030
 export SNAP_ADMIN_USERNAME="e2e-admin" SNAP_ADMIN_PASSWORD="e2e-admin-password"
 go run "$root/scripts/fake-snap.go" >/dev/null 2>&1 & snap=$!
 go build -o bin/api ./cmd/api
@@ -40,9 +34,16 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "DELETE FROM mitra WHERE nama IN ('E2
 ./bin/api seed >/dev/null
 
 ./bin/api & api=$!
-trap 'kill $api $snap 2>/dev/null || true; rm -rf "$snap_secrets"' EXIT
+trap 'kill $api $snap 2>/dev/null || true' EXIT
 for _ in $(seq 30); do curl -sf "http://localhost:$port/api/v1/health" >/dev/null && break; sleep 1; done
 
 cd "$root/fe"
 pnpm --filter admin exec vite build >/dev/null
+# Start Vite preview server for the admin app
+pnpm --filter admin exec vite preview --port 4173 --host 127.0.0.1 >/dev/null &
+preview=$!
+trap 'kill $api $snap $preview 2>/dev/null || true' EXIT
+# Wait for preview server to be ready
+for _ in $(seq 30); do curl -sf "http://127.0.0.1:4173" >/dev/null && break; sleep 1; done
+
 pnpm --filter e2e exec playwright test "$@"

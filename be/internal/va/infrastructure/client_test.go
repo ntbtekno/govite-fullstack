@@ -14,8 +14,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -133,14 +131,9 @@ func TestNewDisabledWhenBaseURLEmpty(t *testing.T) {
 	}
 }
 
-// TestNewOnlyValidatesSecretsRoot proves bundle failures are isolated to the
-// mitra request while an unreadable root still fails boot.
-func TestNewOnlyValidatesSecretsRoot(t *testing.T) {
-	key := newTestKey(t)
-	cfg := testConfig(t, "http://127.0.0.1:8080", key)
-	cfg.SecretsDir = "/nonexistent/path/to/secrets"
-	if _, err := New(cfg); err == nil {
-		t.Fatal("missing secrets root must fail construction")
+func TestNewRequiresCredentialLoader(t *testing.T) {
+	if _, err := New(Config{BaseURL: "http://127.0.0.1:8080"}); err == nil {
+		t.Fatal("missing credential loader must fail construction")
 	}
 }
 
@@ -153,7 +146,7 @@ func TestTokenSignatureIsSHA256WithRSA(t *testing.T) {
 	c := newClientFor(t, f, key)
 	c.now = func() string { return "2026-11-12T16:20:00+08:00" }
 
-	bundle, err := c.bundle("010")
+	bundle, err := c.bundle(context.Background(), "010")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +254,7 @@ func TestTokenCacheReuseAndRefresh(t *testing.T) {
 	}
 
 	// Force expiry: pretend the cached token is within the skew window.
-	bundle, err := c.bundle("010")
+	bundle, err := c.bundle(context.Background(), "010")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,19 +274,6 @@ func TestTokenCacheIsSeparatePerMitra(t *testing.T) {
 	f := newFakeGateway(t)
 	f.createResponse = successResponse
 	cfg := testConfig(t, f.URL, key)
-	second := filepath.Join(cfg.SecretsDir, "011")
-	if err := os.Mkdir(second, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	for name, content := range map[string]string{
-		"partner.json": `{"partnerId":"579","clientId":"011"}`,
-		"hmac.secret":  testHMACSecret + "-011",
-		"private.pem":  pemFor(key),
-	} {
-		if err := os.WriteFile(filepath.Join(second, name), []byte(content), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
 	c, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -417,12 +397,11 @@ func TestServerErrorIsNotRetryable(t *testing.T) {
 	}
 }
 
-// TestPEMVariantsAccepted proves both PKCS#1 and PKCS#8 PEM are read.
+// TestPEMVariantsAccepted proves both PKCS#1 and PKCS#8 PEM are parsed.
 func TestPEMVariantsAccepted(t *testing.T) {
 	key := newTestKey(t)
 	pkcs8 := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: mustPKCS8(t, key)})
-	path := writeTempSecret(t, string(pkcs8))
-	if _, err := readPrivateKey(path); err != nil {
+	if _, err := parsePrivateKeyPEM(pkcs8); err != nil {
 		t.Fatalf("PKCS#8 key rejected: %v", err)
 	}
 }

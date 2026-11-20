@@ -7,54 +7,97 @@ import (
 
 	"govite/internal/kernel"
 	"govite/internal/mitra/domain"
+	"govite/internal/platform/crypto"
 )
 
 type fakeRepo struct {
-	mitra                domain.Mitra
-	createErr            error
-	createCalls          int
-	marked               bool
-	partnerID, repairErr string
+	mitra       domain.Mitra
+	createErr   error
+	createCalls int
+	marked      bool
+	partnerID   string
+	repairErr   string
 }
 
-func (r *fakeRepo) Get(context.Context, string) (domain.Mitra, error) {
-	if r.mitra.ID == "" {
+func (r *fakeRepo) Get(_ context.Context, id string) (domain.Mitra, error) {
+	if r.mitra.ID == "" || r.mitra.ID != id {
 		return domain.Mitra{}, domain.ErrNotFound
 	}
 	return r.mitra, nil
 }
-func (r *fakeRepo) List(context.Context, domain.Filter, int32, int32) ([]domain.Mitra, error) {
+func (r *fakeRepo) List(_ context.Context, _ domain.Filter, _ int32, _ int32) ([]domain.Mitra, error) {
 	return nil, nil
 }
-func (r *fakeRepo) Count(context.Context, domain.Filter) (int64, error) { return 0, nil }
-func (r *fakeRepo) Create(_ context.Context, id, kode, nama string, active bool, psid, prefix, path, status string, partnerID, repairErr *string, connectionType string, delivered bool) error {
-	r.createCalls++
-	if r.createErr != nil && r.createCalls == 1 {
+func (r *fakeRepo) Count(_ context.Context, _ domain.Filter) (int64, error) { return 0, nil }
+func (r *fakeRepo) Create(_ context.Context, id, kode, nama string, active bool, psid, prefix, bundlePath, status string, partnerID, provisionError *string, connectionType string, delivered bool, hmacSecretEncrypted, privateKeyEncrypted *string) error {
+	if r.createErr != nil && r.createCalls == 0 {
+		r.createCalls++
 		return r.createErr
 	}
-	r.mitra = domain.Mitra{ID: id, KodeMitra: kode, Nama: nama, IsActive: active, PartnerServiceID: psid, VAPrefix: prefix, BundlePath: path, ProvisionStatus: status, ProvisionPartnerID: partnerID, ProvisionError: repairErr, ConnectionType: connectionType, CredentialsDelivered: delivered}
+	r.createCalls++
+	r.mitra = domain.Mitra{
+		ID:                   id,
+		KodeMitra:            kode,
+		Nama:                 nama,
+		IsActive:             active,
+		PartnerServiceID:     psid,
+		VAPrefix:             prefix,
+		ProvisionStatus:      status,
+		ProvisionPartnerID:   partnerID,
+		ProvisionError:       provisionError,
+		ConnectionType:       connectionType,
+		CredentialsDelivered: delivered,
+		HMACSecretEncrypted:  hmacSecretEncrypted,
+		PrivateKeyEncrypted:  privateKeyEncrypted,
+	}
 	return nil
 }
-func (r *fakeRepo) MarkNeedsRepair(_ context.Context, _ string, partnerID, repairErr string) error {
+func (r *fakeRepo) MarkNeedsRepair(_ context.Context, id, partnerID, provisionError string) error {
 	r.marked = true
-	r.partnerID, r.repairErr = partnerID, repairErr
-	r.mitra.ProvisionStatus = domain.ProvisionStatusNeedsRepair
+	r.partnerID, r.repairErr = partnerID, provisionError
+	if r.mitra.ID == id {
+		r.mitra.ProvisionStatus = domain.ProvisionStatusNeedsRepair
+		r.mitra.ProvisionPartnerID = &partnerID
+		r.mitra.ProvisionError = &provisionError
+	}
 	return nil
 }
-func (r *fakeRepo) GetByKode(context.Context, string) (domain.Mitra, error) {
-	if r.mitra.ID == "" {
+func (r *fakeRepo) GetByKode(_ context.Context, kode string) (domain.Mitra, error) {
+	if r.mitra.ID == "" || r.mitra.KodeMitra != kode {
 		return domain.Mitra{}, domain.ErrNotFound
 	}
 	return r.mitra, nil
 }
-func (r *fakeRepo) Update(context.Context, string, domain.Changes) error { return nil }
-func (r *fakeRepo) SetActive(context.Context, string, bool) error        { return nil }
-func (r *fakeRepo) RevokeSessions(context.Context, string) error         { return nil }
+func (r *fakeRepo) Update(_ context.Context, _ string, _ domain.Changes) error { return nil }
+func (r *fakeRepo) SetActive(_ context.Context, _ string, _ bool) error        { return nil }
+func (r *fakeRepo) RevokeSessions(_ context.Context, _ string) error           { return nil }
 func (r *fakeRepo) MarkReady(_ context.Context, _ string, delivered bool) error {
-	r.mitra.ProvisionStatus = "READY"
-	r.mitra.ProvisionError = nil
-	r.mitra.CredentialsDelivered = delivered
+	if r.mitra.ID != "" {
+		r.mitra.ProvisionStatus = "READY"
+		r.mitra.ProvisionError = nil
+		r.mitra.CredentialsDelivered = delivered
+	}
 	return nil
+}
+func (r *fakeRepo) SaveEncryptedCredentials(_ context.Context, id, hmacEnc, privEnc string) error {
+	if r.mitra.ID == id {
+		r.mitra.HMACSecretEncrypted = &hmacEnc
+		r.mitra.PrivateKeyEncrypted = &privEnc
+	}
+	return nil
+}
+func (r *fakeRepo) GetEncryptedCredentials(_ context.Context, id string) (string, string, error) {
+	if r.mitra.ID == id {
+		var h, p string
+		if r.mitra.HMACSecretEncrypted != nil {
+			h = *r.mitra.HMACSecretEncrypted
+		}
+		if r.mitra.PrivateKeyEncrypted != nil {
+			p = *r.mitra.PrivateKeyEncrypted
+		}
+		return h, p, nil
+	}
+	return "", "", nil
 }
 
 type fakeTx struct{}
@@ -62,32 +105,36 @@ type fakeTx struct{}
 func (fakeTx) Do(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) }
 
 type fakeProv struct {
-	err        error
-	result     domain.ProvisionResult
-	rotate     domain.RotateResult
-	replaced   []byte
-	privateKey []byte
+	err      error
+	result   domain.ProvisionResult
+	rotate   domain.RotateResult
+	replaced []byte
 }
 
-func (p fakeProv) Provision(context.Context, string, domain.ProvisionInput) (domain.ProvisionResult, error) {
+func (p fakeProv) Provision(_ context.Context, _ string, _ domain.ProvisionInput) (domain.ProvisionResult, error) {
 	return p.result, p.err
 }
-func (p fakeProv) RotateSecret(context.Context, string, string) (domain.RotateResult, error) {
+func (p fakeProv) RotateSecret(_ context.Context, _ string, _ string) (domain.RotateResult, error) {
 	return p.rotate, p.err
 }
-func (p *fakeProv) ReplaceSecret(_ string, secret []byte) error {
-	p.replaced = append([]byte(nil), secret...)
-	return p.err
-}
-func (p *fakeProv) ReadPrivateKey(string) ([]byte, error) { return p.privateKey, p.err }
 
 func validCreateInput() CreateInput {
-	return CreateInput{KodeMitra: "103", Nama: "Repair", PartnerServiceID: "     103", VAPrefix: "10341", BranchCode: "1030", CallbackUrl: strPtr("https://example.com/callback"), RateLimitTier: "standard", ConnectionType: domain.ConnectionPortalOnly}
+	return CreateInput{
+		KodeMitra:        "103",
+		Nama:             "Repair",
+		PartnerServiceID: "     103",
+		VAPrefix:         "10341",
+		BranchCode:       "1030",
+		CallbackUrl:      strPtr("https://example.com/callback"),
+		RateLimitTier:    "standard",
+		ConnectionType:   domain.ConnectionPortalOnly,
+	}
 }
 
-func TestCreateRecordsNeedsRepairAfterBundleFailure(t *testing.T) {
+func TestCreateRecordsNeedsRepairAfterProvisionFailure(t *testing.T) {
 	repo := &fakeRepo{}
-	svc := &Service{Repo: repo, Tx: fakeTx{}, Prov: &fakeProv{err: &domain.ProvisionError{PartnerID: "P-REPAIR", Detail: "write private.pem: disk full", Cause: domain.ErrProvisionFailed}}}
+	prov := &fakeProv{err: &domain.ProvisionError{PartnerID: "P-REPAIR", Detail: "gateway down", Cause: domain.ErrProvisionFailed}}
+	svc := &Service{Repo: repo, Tx: fakeTx{}, Prov: prov, Encryptor: newTestBox(t)}
 	_, err := svc.Create(context.Background(), validCreateInput())
 	var repair *domain.NeedsRepairError
 	if !errors.As(err, &repair) || repair.Mitra.ProvisionStatus != domain.ProvisionStatusNeedsRepair || repair.Mitra.ProvisionPartnerID == nil || *repair.Mitra.ProvisionPartnerID != "P-REPAIR" {
@@ -95,9 +142,10 @@ func TestCreateRecordsNeedsRepairAfterBundleFailure(t *testing.T) {
 	}
 }
 
-func TestCreateRecordsNeedsRepairAfterDBFailureWithoutDeletingBundle(t *testing.T) {
+func TestCreateRecordsNeedsRepairAfterDBFailure(t *testing.T) {
 	repo := &fakeRepo{createErr: errors.New("db unavailable")}
-	svc := &Service{Repo: repo, Tx: fakeTx{}, SecretsDir: "/tmp/snap", Prov: &fakeProv{result: domain.ProvisionResult{PartnerID: "P-DB"}}}
+	prov := &fakeProv{result: domain.ProvisionResult{PartnerID: "P-DB"}}
+	svc := &Service{Repo: repo, Tx: fakeTx{}, Prov: prov, Encryptor: newTestBox(t)}
 	_, err := svc.Create(context.Background(), validCreateInput())
 	var repair *domain.NeedsRepairError
 	if !errors.As(err, &repair) || repair.Mitra.ProvisionStatus != domain.ProvisionStatusNeedsRepair || repair.Mitra.ProvisionPartnerID == nil || *repair.Mitra.ProvisionPartnerID != "P-DB" || repair.Mitra.ProvisionError == nil || *repair.Mitra.ProvisionError != "db unavailable" {
@@ -120,7 +168,6 @@ func TestValidateCreateAcceptsCompleteInput(t *testing.T) {
 	if err := validateCreate(in); err != nil {
 		t.Fatalf("valid input rejected: %v", err)
 	}
-
 	in.IPWhitelist = nil
 	if err := validateCreate(in); err != nil {
 		t.Fatalf("valid input without IP whitelist rejected: %v", err)
@@ -189,15 +236,15 @@ func TestCreateDeliversCredentialsOnlyForHostToHost(t *testing.T) {
 				PartnerID: "P-1", ClientID: "103", GatewayBaseURL: "https://gateway.example",
 				ClientSecret: []byte("fixture-value"), PrivateKeyPEM: []byte("fixture-pem"),
 			}}
-			svc := &Service{Repo: repo, Tx: fakeTx{}, Prov: prov, SecretsDir: t.TempDir()}
+			svc := &Service{Repo: repo, Tx: fakeTx{}, Prov: prov, Encryptor: newTestBox(t)}
 			in := validCreateInput()
 			in.ConnectionType = tc.connectionType
 			result, err := svc.Create(context.Background(), in)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if (result.Credentials != nil) != tc.wantCredentials {
-				t.Fatalf("credentials present = %v, want %v", result.Credentials != nil, tc.wantCredentials)
+			if result.Credentials != nil {
+				t.Fatalf("Phase 1 must not return credentials")
 			}
 			if repo.mitra.CredentialsDelivered != tc.wantCredentials {
 				t.Fatalf("credentialsDelivered = %v", repo.mitra.CredentialsDelivered)
@@ -208,16 +255,25 @@ func TestCreateDeliversCredentialsOnlyForHostToHost(t *testing.T) {
 
 func TestRotateDeliversNewSecretOnlyForHostToHost(t *testing.T) {
 	partnerID := "P-1"
-	repo := &fakeRepo{mitra: domain.Mitra{ID: "m-1", KodeMitra: "103", Nama: "H2H", PartnerServiceID: "     103", VAPrefix: "10341", ProvisionPartnerID: &partnerID, ConnectionType: domain.ConnectionHostToHost}}
-	prov := &fakeProv{rotate: domain.RotateResult{ClientSecret: []byte("rotated-fixture")}, privateKey: []byte("private-fixture")}
-	svc := &Service{Repo: repo, Tx: fakeTx{}, Prov: prov}
+	repo := &fakeRepo{mitra: domain.Mitra{ID: "m-1", KodeMitra: "103", Nama: "H2H", PartnerServiceID: "     103", VAPrefix: "10341", ProvisionPartnerID: &partnerID, ConnectionType: domain.ConnectionHostToHost, CredentialsDelivered: true}}
+	prov := &fakeProv{rotate: domain.RotateResult{ClientSecret: []byte("rotated-fixture")}}
+	svc := &Service{Repo: repo, Tx: fakeTx{}, Prov: prov, Encryptor: newTestBox(t)}
 	result, err := svc.RotateSecret(context.Background(), "m-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Credentials == nil || result.Credentials.PrivateKeyPEM != "private-fixture" || string(prov.replaced) != "rotated-fixture" {
-		t.Fatalf("unexpected rotate result: %+v replaced=%q", result, prov.replaced)
+	if result.Credentials != nil {
+		t.Fatalf("unexpected rotate result: %+v", result)
 	}
+}
+
+func newTestBox(t *testing.T) *crypto.SecretBox {
+	t.Helper()
+	b, err := crypto.NewSecretBox("test-encryption-key-do-not-use-in-production-32")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }
 
 func strPtr(s string) *string { return &s }

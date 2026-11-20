@@ -20,7 +20,6 @@ import (
 	"io"
 	"math/big"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -53,13 +52,16 @@ const (
 )
 
 // Config is everything the client needs at construction. The non-secret values
-// come from SNAP_* env; the two secrets come from file paths. PartnerServiceID
-// is deliberately absent: it is derived per mitra and passed on each request.
+// come from SNAP_* env; credentials are loaded from the database via Loader.
+// PartnerServiceID is deliberately absent: it is derived per mitra and passed
+// on each request.
 type Config struct {
-	BaseURL    string
-	SecretsDir string
-	ChannelID  string
-	Origin     string
+	BaseURL   string
+	ChannelID string
+	Origin    string
+	// Loader returns decrypted credentials for one mitra kode. It is
+	// implemented by the mitra service and reads from the database.
+	Loader vadomain.CredentialLoader
 	// HTTPClient overrides the default client (tests inject httptest's). A nil
 	// client gets a fresh one; http.DefaultClient is never used.
 	HTTPClient *http.Client
@@ -71,11 +73,11 @@ type Config struct {
 // Client is the SNAP Create VA client. It is safe for concurrent use: the
 // token is guarded by a mutex.
 type Client struct {
-	baseURL    string
-	secretsDir string
-	channelID  string
-	origin     string
-	http       *http.Client
+	baseURL   string
+	channelID string
+	origin    string
+	http      *http.Client
+	loader    vadomain.CredentialLoader
 
 	now func() string
 
@@ -96,17 +98,14 @@ type credentialBundle struct {
 var _ vadomain.Gateway = (*Client)(nil)
 
 // New builds a client. Individual bundles are loaded lazily so one malformed
-// mitra does not fail boot; only an unreadable secrets root fails construction.
+// mitra does not fail boot. Credentials are loaded from the database via the
+// configured loader, not from files.
 func New(cfg Config) (*Client, error) {
 	if cfg.BaseURL == "" {
 		return nil, nil
 	}
-	info, err := os.Stat(cfg.SecretsDir)
-	if err != nil || !info.IsDir() {
-		if err == nil {
-			err = errors.New("not a directory")
-		}
-		return nil, fmt.Errorf("snap: secrets directory: %w", err)
+	if cfg.Loader == nil {
+		return nil, errors.New("snap: credential loader is required")
 	}
 	httpClient := cfg.HTTPClient
 	if httpClient == nil {
@@ -117,13 +116,14 @@ func New(cfg Config) (*Client, error) {
 		now = nowTimestamp
 	}
 	return &Client{
-		baseURL: strings.TrimRight(cfg.BaseURL, "/"), secretsDir: cfg.SecretsDir,
+		baseURL:   strings.TrimRight(cfg.BaseURL, "/"),
 		channelID: cfg.ChannelID, origin: cfg.Origin, http: httpClient, now: now,
+		loader:  cfg.Loader,
 		bundles: make(map[string]*credentialBundle),
 	}, nil
 }
 
-func (c *Client) bundle(kode string) (*credentialBundle, error) {
+func (c *Client) bundle(ctx context.Context, kode string) (*credentialBundle, error) {
 	if kode == "" || filepath.Base(kode) != kode {
 		return nil, vadomain.ErrCredentialsUnavailable
 	}
@@ -132,24 +132,15 @@ func (c *Client) bundle(kode string) (*credentialBundle, error) {
 	if b := c.bundles[kode]; b != nil {
 		return b, nil
 	}
-	dir := filepath.Join(c.secretsDir, kode)
-	var partner struct {
-		PartnerID string `json:"partnerId"`
-		ClientID  string `json:"clientId"`
-	}
-	raw, err := os.ReadFile(filepath.Join(dir, "partner.json"))
-	if err != nil || json.Unmarshal(raw, &partner) != nil || partner.PartnerID == "" || partner.ClientID == "" {
+	partnerID, clientID, secret, privateKeyPEM, err := c.loader(ctx, kode)
+	if err != nil || partnerID == "" || clientID == "" || secret == "" || privateKeyPEM == "" {
 		return nil, vadomain.ErrCredentialsUnavailable
 	}
-	secret, err := readSecret(filepath.Join(dir, "hmac.secret"))
+	key, err := parsePrivateKeyPEM([]byte(privateKeyPEM))
 	if err != nil {
 		return nil, vadomain.ErrCredentialsUnavailable
 	}
-	key, err := readPrivateKey(filepath.Join(dir, "private.pem"))
-	if err != nil {
-		return nil, vadomain.ErrCredentialsUnavailable
-	}
-	b := &credentialBundle{partnerID: partner.PartnerID, clientID: partner.ClientID, secret: secret, privateKey: key}
+	b := &credentialBundle{partnerID: partnerID, clientID: clientID, secret: []byte(secret), privateKey: key}
 	c.bundles[kode] = b
 	return b, nil
 }
@@ -157,38 +148,8 @@ func (c *Client) bundle(kode string) (*credentialBundle, error) {
 // Enabled reports whether the client is configured.
 func (c *Client) Enabled() bool { return c != nil }
 
-// readSecret reads a mounted secret file, refusing an empty or whitespace-only
-// value: a blank HMAC secret would sign everything with the empty key.
-func readSecret(path string) ([]byte, error) {
-	if path == "" {
-		return nil, errors.New("secret file path is empty")
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	if len(bytes.TrimSpace(raw)) == 0 {
-		return nil, errors.New("secret file is empty")
-	}
-	if info, err := os.Stat(path); err != nil || info.Mode().Perm()&0o077 != 0 {
-		return nil, errors.New("secret file permissions must be 0600")
-	}
-	return raw, nil
-}
-
-// readPrivateKey reads and parses a PEM RSA private key. Both PKCS#1
-// ("RSA PRIVATE KEY") and PKCS#8 ("PRIVATE KEY") blocks are accepted.
-func readPrivateKey(path string) (*rsa.PrivateKey, error) {
-	if path == "" {
-		return nil, errors.New("private key file path is empty")
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	if info, err := os.Stat(path); err != nil || info.Mode().Perm()&0o077 != 0 {
-		return nil, errors.New("private key permissions must be 0600")
-	}
+// parsePrivateKeyPEM parses an in-memory PKCS#1 or PKCS#8 RSA private key.
+func parsePrivateKeyPEM(raw []byte) (*rsa.PrivateKey, error) {
 	block, _ := pem.Decode(raw)
 	if block == nil {
 		return nil, errors.New("no PEM block found")
@@ -210,7 +171,7 @@ func readPrivateKey(path string) (*rsa.PrivateKey, error) {
 // CreateVA builds the business body, signs it and calls the gateway. Success is
 // 2002700 with status ACTIVE only; every other answer becomes a typed error.
 func (c *Client) CreateVA(ctx context.Context, req vadomain.CreateRequest) (vadomain.CreateResult, error) {
-	bundle, err := c.bundle(req.MitraKode)
+	bundle, err := c.bundle(ctx, req.MitraKode)
 	if err != nil {
 		return vadomain.CreateResult{}, err
 	}
@@ -263,7 +224,7 @@ func (c *Client) CreateVA(ctx context.Context, req vadomain.CreateRequest) (vado
 // InquiryVA checks the deterministic full VA number for the same trxId after a
 // transient create outcome. It never contacts CBS directly and never retries.
 func (c *Client) InquiryVA(ctx context.Context, req vadomain.InquiryRequest) (vadomain.CreateResult, error) {
-	bundle, err := c.bundle(req.MitraKode)
+	bundle, err := c.bundle(ctx, req.MitraKode)
 	if err != nil {
 		return vadomain.CreateResult{}, err
 	}

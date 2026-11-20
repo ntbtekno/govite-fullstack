@@ -5,26 +5,24 @@ import (
 	"errors"
 	"net"
 	"net/url"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 
 	"govite/internal/kernel"
 	"govite/internal/mitra/domain"
+	"govite/internal/platform/crypto"
 )
 
 var mitraKodeRe = regexp.MustCompile(`^[0-9]{3}$`)
 
 type Service struct {
-	Repo domain.Repository
-	Tx   kernel.Tx
-	Prov domain.Provisioner
-	// SecretsDir is the SNAP credential root. Empty means the gateway is not
-	// configured and mitra creation does not provision a bundle.
-	SecretsDir string
+	Repo      domain.Repository
+	Tx        kernel.Tx
+	Prov      domain.Provisioner
+	Encryptor *crypto.SecretBox
 }
 
+// List returns mitra rows with the total count.
 func (s *Service) List(ctx context.Context, f domain.Filter, limit, offset int32) ([]domain.Mitra, int64, error) {
 	rows, err := s.Repo.List(ctx, f, limit, offset)
 	if err != nil {
@@ -37,22 +35,19 @@ func (s *Service) List(ctx context.Context, f domain.Filter, limit, offset int32
 	return rows, total, nil
 }
 
+// Get returns a single mitra. Bundle completeness is derived from the
+// encrypted credential columns in the database, never from files.
 func (s *Service) Get(ctx context.Context, id string) (domain.Mitra, error) {
 	mitra, err := s.Repo.Get(ctx, id)
 	if err != nil {
 		return domain.Mitra{}, err
 	}
 	mitra.BundleCompleteness = &domain.BundleCompleteness{
-		PartnerJSON: nonEmptyFile(filepath.Join(mitra.BundlePath, "partner.json")),
-		HMACSecret:  nonEmptyFile(filepath.Join(mitra.BundlePath, "hmac.secret")),
-		PrivatePEM:  nonEmptyFile(filepath.Join(mitra.BundlePath, "private.pem")),
+		PartnerJSON: mitra.ProvisionPartnerID != nil,
+		HMACSecret:  mitra.HMACSecretEncrypted != nil && *mitra.HMACSecretEncrypted != "",
+		PrivatePEM:  mitra.PrivateKeyEncrypted != nil && *mitra.PrivateKeyEncrypted != "",
 	}
 	return mitra, nil
-}
-
-func nonEmptyFile(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.Mode().IsRegular() && info.Size() > 0
 }
 
 // CreateInput is the superadmin's request to create one mitra. Every field is
@@ -116,13 +111,40 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (CreateResult, err
 		}
 	}
 
+	// Encrypt the credential material before persisting. Encryption failures
+	// are treated as persistence failures: the gateway partner must not be
+	// re-registered.
+	var hmacEnc, privEnc string
+	if provision.ClientSecret != nil {
+		sealed, err := crypto.EncryptWithSecretBox(s.Encryptor, string(provision.ClientSecret))
+		if err != nil {
+			detail := "encrypt hmac.secret: " + err.Error()
+			if m, repairErr := s.recordNeedsRepair(ctx, in, provision.PartnerID, detail); repairErr == nil {
+				return CreateResult{Mitra: m}, &domain.NeedsRepairError{Mitra: m, Cause: err}
+			}
+			return CreateResult{}, err
+		}
+		hmacEnc = sealed
+	}
+	if provision.PrivateKeyPEM != nil {
+		sealed, err := crypto.EncryptWithSecretBox(s.Encryptor, string(provision.PrivateKeyPEM))
+		if err != nil {
+			detail := "encrypt private.pem: " + err.Error()
+			if m, repairErr := s.recordNeedsRepair(ctx, in, provision.PartnerID, detail); repairErr == nil {
+				return CreateResult{Mitra: m}, &domain.NeedsRepairError{Mitra: m, Cause: err}
+			}
+			return CreateResult{}, err
+		}
+		privEnc = sealed
+	}
+
 	id := kernel.NewID()
 	if err := s.Tx.Do(ctx, func(ctx context.Context) error {
 		var partnerID *string
 		if provision.PartnerID != "" {
 			partnerID = &provision.PartnerID
 		}
-		return s.Repo.Create(ctx, id, in.KodeMitra, in.Nama, true, in.PartnerServiceID, in.VAPrefix, filepath.Join(s.SecretsDir, in.KodeMitra), "READY", partnerID, nil, in.ConnectionType, in.ConnectionType == domain.ConnectionHostToHost)
+		return s.Repo.Create(ctx, id, in.KodeMitra, in.Nama, true, in.PartnerServiceID, in.VAPrefix, "", "READY", partnerID, nil, in.ConnectionType, in.ConnectionType == domain.ConnectionHostToHost, &hmacEnc, &privEnc)
 	}); err != nil {
 		if provision.PartnerID != "" {
 			if m, repairErr := s.recordNeedsRepair(ctx, in, provision.PartnerID, err.Error()); repairErr == nil {
@@ -135,16 +157,35 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (CreateResult, err
 	if err != nil {
 		return CreateResult{}, err
 	}
-	result := CreateResult{Mitra: mitra}
-	if in.ConnectionType == domain.ConnectionHostToHost {
-		result.Credentials = &CredentialDelivery{
-			PartnerID: provision.PartnerID, ClientID: provision.ClientID,
-			PartnerServiceID: in.PartnerServiceID, VAPrefix: in.VAPrefix,
-			GatewayBaseURL: provision.GatewayBaseURL,
-			ClientSecret:   string(provision.ClientSecret), PrivateKeyPEM: string(provision.PrivateKeyPEM),
-		}
+	// Phase 1 never returns credential material. Phase 2 owns one-time H2H
+	// delivery and will load it from the encrypted DB columns.
+	return CreateResult{Mitra: mitra}, nil
+}
+
+// GetCredentials returns decrypted credentials for one mitra kode, used by the
+// VA signing client as a credential loader. It never returns plaintext
+// secrets to the frontend; it is only consumed by backend signing code.
+func (s *Service) GetCredentials(ctx context.Context, kode string) (partnerID, clientID, secret, privateKeyPEM string, err error) {
+	mitra, err := s.Repo.GetByKode(ctx, kode)
+	if err != nil {
+		return "", "", "", "", err
 	}
-	return result, nil
+	hmacEnc, privEnc, err := s.Repo.GetEncryptedCredentials(ctx, mitra.ID)
+	if err != nil {
+		return "", "", "", "", err
+	}
+	secret, err = crypto.DecryptWithSecretBox(s.Encryptor, hmacEnc)
+	if err != nil {
+		return "", "", "", "", err
+	}
+	privateKeyPEM, err = crypto.DecryptWithSecretBox(s.Encryptor, privEnc)
+	if err != nil {
+		return "", "", "", "", err
+	}
+	if mitra.ProvisionPartnerID != nil {
+		partnerID = *mitra.ProvisionPartnerID
+	}
+	return partnerID, mitra.KodeMitra, secret, privateKeyPEM, nil
 }
 
 func (s *Service) recordNeedsRepair(ctx context.Context, in CreateInput, partnerID, detail string) (domain.Mitra, error) {
@@ -156,10 +197,9 @@ func (s *Service) recordNeedsRepair(ctx context.Context, in CreateInput, partner
 		return s.Repo.Get(ctx, existing.ID)
 	}
 	id := kernel.NewID()
-	path := filepath.Join(s.SecretsDir, in.KodeMitra)
 	if err := s.Tx.Do(ctx, func(ctx context.Context) error {
 		pid, msg := partnerID, detail
-		return s.Repo.Create(ctx, id, in.KodeMitra, in.Nama, true, in.PartnerServiceID, in.VAPrefix, path, domain.ProvisionStatusNeedsRepair, &pid, &msg, in.ConnectionType, false)
+		return s.Repo.Create(ctx, id, in.KodeMitra, in.Nama, true, in.PartnerServiceID, in.VAPrefix, "", domain.ProvisionStatusNeedsRepair, &pid, &msg, in.ConnectionType, false, nil, nil)
 	}); err != nil {
 		return domain.Mitra{}, err
 	}
@@ -183,12 +223,11 @@ func validateCreate(in CreateInput) error {
 	if strings.TrimSpace(in.BranchCode) == "" {
 		return validation("branchCode: wajib diisi")
 	}
-	if in.CallbackUrl != nil && *in.CallbackUrl != "" {
-		u, err := url.Parse(*in.CallbackUrl)
-		if err != nil || u.Scheme != "https" || u.Host == "" {
-			return validation("callbackUrl: wajib URL HTTPS yang valid")
-		}
-	} else {
+	if in.CallbackUrl == nil || *in.CallbackUrl == "" {
+		return validation("callbackUrl: wajib URL HTTPS yang valid")
+	}
+	u, err := url.Parse(*in.CallbackUrl)
+	if err != nil || u.Scheme != "https" || u.Host == "" {
 		return validation("callbackUrl: wajib URL HTTPS yang valid")
 	}
 	if in.RateLimitTier != "standard" {
@@ -274,13 +313,27 @@ func (s *Service) RotateSecret(ctx context.Context, id string) (RotateResult, er
 		}
 		return RotateResult{}, err
 	}
-	if err := s.Prov.ReplaceSecret(mitra.KodeMitra, rotated.ClientSecret); err != nil {
-		detail := "write rotated hmac.secret: " + err.Error()
+	// Encrypt the new secret before persisting. On failure, mark NEEDS_REPAIR
+	// and do not retry blindly: the gateway has already invalidated the old
+	// secret.
+	sealed, err := crypto.EncryptWithSecretBox(s.Encryptor, string(rotated.ClientSecret))
+	if err != nil {
+		detail := "encrypt rotated hmac.secret: " + err.Error()
 		_ = s.Repo.MarkNeedsRepair(ctx, id, *mitra.ProvisionPartnerID, detail)
 		return RotateResult{}, domain.ErrProvisionFailed.WithDetail(detail)
 	}
-	delivered := mitra.ConnectionType == domain.ConnectionHostToHost
-	deliverPrivateKey := delivered && !mitra.CredentialsDelivered
+	// Keep the existing encrypted private key; rotation changes only the HMAC
+	// secret. Read it back so the DB row stays consistent.
+	_, privEnc, err := s.Repo.GetEncryptedCredentials(ctx, id)
+	if err != nil {
+		_ = s.Repo.MarkNeedsRepair(ctx, id, *mitra.ProvisionPartnerID, err.Error())
+		return RotateResult{}, err
+	}
+	if err := s.Repo.SaveEncryptedCredentials(ctx, id, sealed, privEnc); err != nil {
+		_ = s.Repo.MarkNeedsRepair(ctx, id, *mitra.ProvisionPartnerID, err.Error())
+		return RotateResult{}, err
+	}
+	delivered := mitra.CredentialsDelivered
 	if err := s.Repo.MarkReady(ctx, id, delivered); err != nil {
 		_ = s.Repo.MarkNeedsRepair(ctx, id, *mitra.ProvisionPartnerID, "persist rotated credential state: "+err.Error())
 		return RotateResult{}, err
@@ -289,23 +342,8 @@ func (s *Service) RotateSecret(ctx context.Context, id string) (RotateResult, er
 	if err != nil {
 		return RotateResult{}, err
 	}
-	result := RotateResult{Mitra: mitra}
-	if delivered {
-		var privateKey string
-		if deliverPrivateKey {
-			privateRaw, readErr := s.Prov.ReadPrivateKey(mitra.KodeMitra)
-			if readErr != nil {
-				return RotateResult{}, domain.ErrProvisionFailed.WithDetail("read private.pem for first H2H delivery: " + readErr.Error())
-			}
-			privateKey = string(privateRaw)
-		}
-		result.Credentials = &CredentialDelivery{
-			PartnerID: *mitra.ProvisionPartnerID, ClientID: mitra.KodeMitra,
-			PartnerServiceID: mitra.PartnerServiceID, VAPrefix: mitra.VAPrefix,
-			ClientSecret: string(rotated.ClientSecret), PrivateKeyPEM: privateKey,
-		}
-	}
-	return result, nil
+	// Phase 1 never returns the rotated secret. Phase 2 owns one-time delivery.
+	return RotateResult{Mitra: mitra}, nil
 }
 
 type ActiveInput struct {

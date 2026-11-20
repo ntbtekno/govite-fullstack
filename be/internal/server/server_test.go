@@ -7,11 +7,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha512"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"encoding/pem"
 	"io"
 	"maps"
 	"mime/multipart"
@@ -166,13 +164,14 @@ func setupWithSNAP(t *testing.T, cap *struct {
 		t.Fatal(err)
 	}
 	m := &mail.Memory{}
+	encKey := "test-encryption-key-do-not-use-in-production-32"
 	cfg := config.Config{Env: "test", WebURL: "http://web.test", JWTSecret: strings.Repeat("s", 32), RefreshPepper: strings.Repeat("p", 16), ThrottleLimit: 100000, LoginThrottleLimit: 100000, CaptchaThrottleLimit: 100000, LogLevel: "silent", MidtransServerKey: "test-server-key",
-		SNAPBaseURL:       "", // filled below
-		SNAPAdminUsername: "test-admin",
-		SNAPAdminPassword: "test-admin-pw",
-		SNAPSecretsDir:    t.TempDir(),
-		SNAPChannelID:     "02030",
-		SNAPOrigin:        "http://portal.test",
+		SNAPBaseURL:                "", // filled below
+		SNAPAdminUsername:          "test-admin",
+		SNAPAdminPassword:          "test-admin-pw",
+		SNAPChannelID:              "02030",
+		SNAPOrigin:                 "http://portal.test",
+		PortalSecretsEncryptionKey: encKey,
 	}
 	push := &fcm.Memory{}
 	logsDir := t.TempDir()
@@ -204,7 +203,6 @@ func setupWithSNAP(t *testing.T, cap *struct {
 		BaseURL:       cfg.SNAPBaseURL,
 		AdminUsername: cfg.SNAPAdminUsername,
 		AdminPassword: cfg.SNAPAdminPassword,
-		SecretsDir:    cfg.SNAPSecretsDir,
 		ChannelID:     cfg.SNAPChannelID,
 		Origin:        cfg.SNAPOrigin,
 		HTTPClient:    gateway.Client(),
@@ -215,7 +213,7 @@ func setupWithSNAP(t *testing.T, cap *struct {
 	d.MitraProv = prov
 
 	f, _ := server.New(d)
-	return &env{t, f, store.New(pool), pool, m, push, logsDir}, gateway, cfg.SNAPSecretsDir
+	return &env{t, f, store.New(pool), pool, m, push, logsDir}, gateway, ""
 }
 
 // seedUser creates a role holding perms (scope all) and an active user in it.
@@ -623,12 +621,10 @@ func TestMitraChangesAreAudited(t *testing.T) {
 	}
 }
 
-// TestCreateMitraProvisionsBundle proves Milestone 2.5: creating a mitra with
-// the SNAP gateway configured generates its RSA-2048 keypair server-side,
-// registers the partner with the gateway, and writes the credential bundle
-// without any secret ever leaving the server.
+// TestCreateMitraPersistsEncryptedCredentials proves Phase 1 registration
+// stores credential material encrypted in the database and never returns it.
 func TestCreateMitraProvisionsBundle(t *testing.T) {
-	e, _, secretsDir := setupWithSNAP(t, nil)
+	e, _, _ := setupWithSNAP(t, nil)
 	ctx := context.Background()
 
 	e.seedUser("root@test.local", all...)
@@ -652,50 +648,8 @@ func TestCreateMitraProvisionsBundle(t *testing.T) {
 		t.Fatalf("unexpected mitra data: %s", r.Raw)
 	}
 
-	dir := filepath.Join(secretsDir, "101")
-	partnerRaw, err := os.ReadFile(filepath.Join(dir, "partner.json"))
-	if err != nil {
-		t.Fatalf("partner.json not written: %v", err)
-	}
-	var partner struct {
-		PartnerID        string `json:"partnerId"`
-		ClientID         string `json:"clientId"`
-		PartnerServiceID string `json:"partnerServiceId"`
-		VAPrefix         string `json:"vaPrefix"`
-	}
-	if err := json.Unmarshal(partnerRaw, &partner); err != nil {
-		t.Fatalf("partner.json unreadable: %v", err)
-	}
-	if partner.PartnerID != "P-777" || partner.ClientID != "101" || partner.PartnerServiceID != "     101" || partner.VAPrefix != "10141" {
-		t.Fatalf("partner.json content wrong: %s", partnerRaw)
-	}
-
-	secret, err := os.ReadFile(filepath.Join(dir, "hmac.secret"))
-	if err != nil {
-		t.Fatalf("hmac.secret not written: %v", err)
-	}
-	if string(secret) != "s3cr3t-hmac" {
-		t.Fatalf("hmac.secret content wrong: %q", secret)
-	}
-	for _, name := range []string{"hmac.secret", "private.pem"} {
-		mode, err := filePerm(t, filepath.Join(dir, name))
-		if err != nil || mode&0o077 != 0 {
-			t.Fatalf("%s perm %v, want 0600", name, mode)
-		}
-	}
-	privateRaw, err := os.ReadFile(filepath.Join(dir, "private.pem"))
-	if err != nil {
-		t.Fatalf("private.pem not written: %v", err)
-	}
-	block, _ := pem.Decode(privateRaw)
-	if block == nil || block.Type != "PRIVATE KEY" {
-		t.Fatalf("private.pem is not a PKCS#8 PEM private key")
-	}
-	if _, err := x509.ParsePKCS8PrivateKey(block.Bytes); err != nil {
-		t.Fatalf("private.pem not parseable: %v", err)
-	}
-
-	// The mitra row exists and the secret never appeared in the response.
+	// The mitra row exists and encrypted fields are populated without exposing
+	// their plaintext values through the API response.
 	m, err := e.q.GetMitraByKode(ctx, "101")
 	if err != nil {
 		t.Fatalf("mitra row missing: %v", err)
@@ -703,7 +657,10 @@ func TestCreateMitraProvisionsBundle(t *testing.T) {
 	if m.ID != id {
 		t.Fatalf("mitra id mismatch: %s vs %s", m.ID, id)
 	}
-	if strings.Contains(string(r.Raw), "s3cr3t-hmac") || strings.Contains(string(r.Raw), "PRIVATE KEY") {
+	if m.HmacSecretEncrypted == nil || m.PrivateKeyEncrypted == nil || *m.HmacSecretEncrypted == "" || *m.PrivateKeyEncrypted == "" {
+		t.Fatal("encrypted credential columns are incomplete")
+	}
+	if strings.Contains(*m.HmacSecretEncrypted, "s3cr3t-hmac") || strings.Contains(*m.PrivateKeyEncrypted, "PRIVATE KEY") || strings.Contains(string(r.Raw), "clientSecret") || strings.Contains(string(r.Raw), "PRIVATE KEY") {
 		t.Fatal("secret or private key leaked into the create response")
 	}
 }

@@ -1,6 +1,6 @@
 -- name: CreateMitra :exec
-INSERT INTO "mitra" (id, kode_mitra, nama, is_active, partner_service_id, va_prefix, bundle_path, provision_status, provision_partner_id, provision_error, connection_type, credentials_delivered)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, sqlc.arg(connection_type)::text, sqlc.arg(credentials_delivered)::boolean);
+INSERT INTO "mitra" (id, kode_mitra, nama, is_active, partner_service_id, va_prefix, bundle_path, provision_status, provision_partner_id, provision_error, connection_type, credentials_delivered, hmac_secret_encrypted, private_key_encrypted)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, sqlc.arg(connection_type)::text, sqlc.arg(credentials_delivered)::boolean, $11, $12);
 
 -- name: GetMitraByID :one
 SELECT * FROM "mitra" WHERE id = $1;
@@ -41,4 +41,22 @@ WHERE id = $1;
 -- name: MarkMitraReady :exec
 UPDATE "mitra"
 SET provision_status = 'READY', provision_error = NULL, credentials_delivered = $2
+WHERE id = $1;
+
+-- name: SaveMitraEncryptedCredentials :exec
+UPDATE "mitra"
+SET hmac_secret_encrypted = $2, private_key_encrypted = $3
+WHERE id = $1;
+
+-- name: GetMitraEncryptedCredentials :one
+SELECT hmac_secret_encrypted, private_key_encrypted FROM "mitra" WHERE id = $1;
+
+-- name: SeedMitraCredentials :exec
+UPDATE "mitra"
+SET partner_service_id = $2,
+    va_prefix = $3,
+    provision_status = 'READY',
+    provision_partner_id = $4,
+    hmac_secret_encrypted = $5,
+    private_key_encrypted = $6
 WHERE id = $1;

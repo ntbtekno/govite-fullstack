@@ -22,8 +22,8 @@ func (q *Queries) CountMitra(ctx context.Context, search *string) (int64, error)
 }
 
 const createMitra = `-- name: CreateMitra :exec
-INSERT INTO "mitra" (id, kode_mitra, nama, is_active, partner_service_id, va_prefix, bundle_path, provision_status, provision_partner_id, provision_error, connection_type, credentials_delivered)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::text, $12::boolean)
+INSERT INTO "mitra" (id, kode_mitra, nama, is_active, partner_service_id, va_prefix, bundle_path, provision_status, provision_partner_id, provision_error, connection_type, credentials_delivered, hmac_secret_encrypted, private_key_encrypted)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $13::text, $14::boolean, $11, $12)
 `
 
 type CreateMitraParams struct {
@@ -37,6 +37,8 @@ type CreateMitraParams struct {
 	ProvisionStatus      string
 	ProvisionPartnerID   *string
 	ProvisionError       *string
+	HmacSecretEncrypted  *string
+	PrivateKeyEncrypted  *string
 	ConnectionType       string
 	CredentialsDelivered bool
 }
@@ -53,6 +55,8 @@ func (q *Queries) CreateMitra(ctx context.Context, arg CreateMitraParams) error 
 		arg.ProvisionStatus,
 		arg.ProvisionPartnerID,
 		arg.ProvisionError,
+		arg.HmacSecretEncrypted,
+		arg.PrivateKeyEncrypted,
 		arg.ConnectionType,
 		arg.CredentialsDelivered,
 	)
@@ -60,7 +64,7 @@ func (q *Queries) CreateMitra(ctx context.Context, arg CreateMitraParams) error 
 }
 
 const getMitraByID = `-- name: GetMitraByID :one
-SELECT id, kode_mitra, nama, is_active, created_at, partner_service_id, va_prefix, bundle_path, provision_status, provision_partner_id, provision_error, connection_type, credentials_delivered FROM "mitra" WHERE id = $1
+SELECT id, kode_mitra, nama, is_active, created_at, partner_service_id, va_prefix, bundle_path, provision_status, provision_partner_id, provision_error, connection_type, credentials_delivered, hmac_secret_encrypted, private_key_encrypted FROM "mitra" WHERE id = $1
 `
 
 func (q *Queries) GetMitraByID(ctx context.Context, id string) (Mitra, error) {
@@ -80,12 +84,14 @@ func (q *Queries) GetMitraByID(ctx context.Context, id string) (Mitra, error) {
 		&i.ProvisionError,
 		&i.ConnectionType,
 		&i.CredentialsDelivered,
+		&i.HmacSecretEncrypted,
+		&i.PrivateKeyEncrypted,
 	)
 	return i, err
 }
 
 const getMitraByKode = `-- name: GetMitraByKode :one
-SELECT id, kode_mitra, nama, is_active, created_at, partner_service_id, va_prefix, bundle_path, provision_status, provision_partner_id, provision_error, connection_type, credentials_delivered FROM "mitra" WHERE kode_mitra = $1
+SELECT id, kode_mitra, nama, is_active, created_at, partner_service_id, va_prefix, bundle_path, provision_status, provision_partner_id, provision_error, connection_type, credentials_delivered, hmac_secret_encrypted, private_key_encrypted FROM "mitra" WHERE kode_mitra = $1
 `
 
 func (q *Queries) GetMitraByKode(ctx context.Context, kodeMitra string) (Mitra, error) {
@@ -105,12 +111,30 @@ func (q *Queries) GetMitraByKode(ctx context.Context, kodeMitra string) (Mitra, 
 		&i.ProvisionError,
 		&i.ConnectionType,
 		&i.CredentialsDelivered,
+		&i.HmacSecretEncrypted,
+		&i.PrivateKeyEncrypted,
 	)
 	return i, err
 }
 
+const getMitraEncryptedCredentials = `-- name: GetMitraEncryptedCredentials :one
+SELECT hmac_secret_encrypted, private_key_encrypted FROM "mitra" WHERE id = $1
+`
+
+type GetMitraEncryptedCredentialsRow struct {
+	HmacSecretEncrypted *string
+	PrivateKeyEncrypted *string
+}
+
+func (q *Queries) GetMitraEncryptedCredentials(ctx context.Context, id string) (GetMitraEncryptedCredentialsRow, error) {
+	row := q.db.QueryRow(ctx, getMitraEncryptedCredentials, id)
+	var i GetMitraEncryptedCredentialsRow
+	err := row.Scan(&i.HmacSecretEncrypted, &i.PrivateKeyEncrypted)
+	return i, err
+}
+
 const listMitra = `-- name: ListMitra :many
-SELECT id, kode_mitra, nama, is_active, created_at, partner_service_id, va_prefix, bundle_path, provision_status, provision_partner_id, provision_error, connection_type, credentials_delivered FROM "mitra"
+SELECT id, kode_mitra, nama, is_active, created_at, partner_service_id, va_prefix, bundle_path, provision_status, provision_partner_id, provision_error, connection_type, credentials_delivered, hmac_secret_encrypted, private_key_encrypted FROM "mitra"
 WHERE ($1::text IS NULL OR nama ILIKE '%' || $1 || '%' OR kode_mitra ILIKE '%' || $1 || '%')
 ORDER BY created_at DESC
 LIMIT $3 OFFSET $2
@@ -145,6 +169,8 @@ func (q *Queries) ListMitra(ctx context.Context, arg ListMitraParams) ([]Mitra, 
 			&i.ProvisionError,
 			&i.ConnectionType,
 			&i.CredentialsDelivered,
+			&i.HmacSecretEncrypted,
+			&i.PrivateKeyEncrypted,
 		); err != nil {
 			return nil, err
 		}
@@ -186,6 +212,55 @@ type MarkMitraReadyParams struct {
 
 func (q *Queries) MarkMitraReady(ctx context.Context, arg MarkMitraReadyParams) error {
 	_, err := q.db.Exec(ctx, markMitraReady, arg.ID, arg.CredentialsDelivered)
+	return err
+}
+
+const saveMitraEncryptedCredentials = `-- name: SaveMitraEncryptedCredentials :exec
+UPDATE "mitra"
+SET hmac_secret_encrypted = $2, private_key_encrypted = $3
+WHERE id = $1
+`
+
+type SaveMitraEncryptedCredentialsParams struct {
+	ID                  string
+	HmacSecretEncrypted *string
+	PrivateKeyEncrypted *string
+}
+
+func (q *Queries) SaveMitraEncryptedCredentials(ctx context.Context, arg SaveMitraEncryptedCredentialsParams) error {
+	_, err := q.db.Exec(ctx, saveMitraEncryptedCredentials, arg.ID, arg.HmacSecretEncrypted, arg.PrivateKeyEncrypted)
+	return err
+}
+
+const seedMitraCredentials = `-- name: SeedMitraCredentials :exec
+UPDATE "mitra"
+SET partner_service_id = $2,
+    va_prefix = $3,
+    provision_status = 'READY',
+    provision_partner_id = $4,
+    hmac_secret_encrypted = $5,
+    private_key_encrypted = $6
+WHERE id = $1
+`
+
+type SeedMitraCredentialsParams struct {
+	ID                  string
+	PartnerServiceID    string
+	VaPrefix            string
+	ProvisionPartnerID  *string
+	HmacSecretEncrypted *string
+	PrivateKeyEncrypted *string
+}
+
+func (q *Queries) SeedMitraCredentials(ctx context.Context, arg SeedMitraCredentialsParams) error {
+	_, err := q.db.Exec(ctx, seedMitraCredentials,
+		arg.ID,
+		arg.PartnerServiceID,
+		arg.VaPrefix,
+		arg.ProvisionPartnerID,
+		arg.HmacSecretEncrypted,
+		arg.PrivateKeyEncrypted,
+	)
 	return err
 }
 

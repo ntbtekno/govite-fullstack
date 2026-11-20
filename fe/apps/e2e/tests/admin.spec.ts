@@ -1,6 +1,4 @@
 import { expect, test, type Page } from "@playwright/test"
-import { access, stat } from "node:fs/promises"
-import path from "node:path"
 
 // Needs a running API seeded with this user, whose role must not require 2FA
 // (scripts/e2e.sh sets that up).
@@ -139,7 +137,7 @@ test("create a user from the dialog", async ({ page }) => {
   expect(problems).toEqual([])
 })
 
-test("superadmin creates H2H mitra, sees credentials once, and rotates secret", async ({ page }) => {
+test("superadmin creates H2H mitra and returns only the encrypted-storage summary", async ({ page }) => {
   const problems = watch(page)
   await signIn(page)
   await page.goto("/admin/administration/mitra")
@@ -163,25 +161,9 @@ test("superadmin creates H2H mitra, sees credentials once, and rotates secret", 
   expect(response.ok(), JSON.stringify(responseBody)).toBe(true)
   const created = responseBody.data
   expect(created.mitra.provisionStatus).toBe("READY")
-  expect(created.mitra.bundlePath).toBeTruthy()
-  expect(created.credentials.clientSecret).toBeTruthy()
-  expect(created.credentials.privateKeyPem).toContain("BEGIN PRIVATE KEY")
-  const bundleDir = path.join(process.env.E2E_SNAP_SECRETS_DIR ?? "", kode)
-  for (const file of ["partner.json", "hmac.secret", "private.pem"]) {
-    await access(path.join(bundleDir, file))
-    expect((await stat(path.join(bundleDir, file))).size).toBeGreaterThan(0)
-  }
-  await expect(page.getByRole("heading", { name: "One-time credentials" })).toBeVisible()
-  await expect(page.getByText("These credentials are shown once", { exact: false })).toBeVisible()
-  await page.reload()
-  await expect(page.getByText("Credentials already delivered")).toBeVisible()
-  await page.goto(`/admin/administration/mitra/${created.mitra.id}`)
-  await page.getByRole("link", { name: "Rotate Secret" }).click()
-  await page.getByRole("button", { name: "Rotate Secret" }).click()
-  await expect(page.getByRole("dialog", { name: "Confirm secret rotation" })).toBeVisible()
-  await page.getByRole("button", { name: "Confirm Rotate" }).click()
-  await expect(page.getByRole("heading", { name: "One-time credentials" })).toBeVisible()
-  await expect(page.getByText("e2e-rotated-hmac-secret")).toBeVisible()
+  expect(created.mitra.connectionType).toBe("HOST_TO_HOST")
+  expect(created).not.toHaveProperty("credentials")
+  expect(JSON.stringify(created)).not.toMatch(/clientSecret|privateKeyPem|BEGIN PRIVATE KEY/)
   expect(problems).toEqual([])
 })
 

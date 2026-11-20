@@ -23,20 +23,23 @@ var (
 )
 
 type Mitra struct {
-	ID                   string              `json:"id"`
-	KodeMitra            string              `json:"kodeMitra"`
-	Nama                 string              `json:"nama"`
-	IsActive             bool                `json:"isActive"`
-	CreatedAt            time.Time           `json:"createdAt"`
-	PartnerServiceID     string              `json:"partnerServiceId"`
-	VAPrefix             string              `json:"vaPrefix"`
-	BundlePath           string              `json:"bundlePath"`
-	ProvisionStatus      string              `json:"provisionStatus"`
-	ProvisionPartnerID   *string             `json:"provisionPartnerId,omitempty"`
-	ProvisionError       *string             `json:"provisionError,omitempty"`
-	ConnectionType       string              `json:"connectionType"`
-	CredentialsDelivered bool                `json:"credentialsDelivered"`
-	BundleCompleteness   *BundleCompleteness `json:"bundleCompleteness,omitempty"`
+	ID                   string    `json:"id"`
+	KodeMitra            string    `json:"kodeMitra"`
+	Nama                 string    `json:"nama"`
+	IsActive             bool      `json:"isActive"`
+	CreatedAt            time.Time `json:"createdAt"`
+	PartnerServiceID     string    `json:"partnerServiceId"`
+	VAPrefix             string    `json:"vaPrefix"`
+	ProvisionStatus      string    `json:"provisionStatus"`
+	ProvisionPartnerID   *string   `json:"provisionPartnerId,omitempty"`
+	ProvisionError       *string   `json:"provisionError,omitempty"`
+	ConnectionType       string    `json:"connectionType"`
+	CredentialsDelivered bool      `json:"credentialsDelivered"`
+	// Encrypted credential material. Never returned to the frontend; used only
+	// internally to verify completeness and to feed the VA signing client.
+	HMACSecretEncrypted *string             `json:"-"`
+	PrivateKeyEncrypted *string             `json:"-"`
+	BundleCompleteness  *BundleCompleteness `json:"bundleCompleteness,omitempty"`
 }
 
 type BundleCompleteness struct {
@@ -99,18 +102,18 @@ type Repository interface {
 	Get(context.Context, string) (Mitra, error)
 	List(context.Context, Filter, int32, int32) ([]Mitra, error)
 	Count(context.Context, Filter) (int64, error)
-	Create(context.Context, string, string, string, bool, string, string, string, string, *string, *string, string, bool) error
+	Create(context.Context, string, string, string, bool, string, string, string, string, *string, *string, string, bool, *string, *string) error
 	MarkNeedsRepair(context.Context, string, string, string) error
 	GetByKode(context.Context, string) (Mitra, error)
 	Update(context.Context, string, Changes) error
 	SetActive(context.Context, string, bool) error
 	RevokeSessions(context.Context, string) error
 	MarkReady(context.Context, string, bool) error
+	SaveEncryptedCredentials(ctx context.Context, id, hmacSecretEncrypted, privateKeyEncrypted string) error
+	GetEncryptedCredentials(ctx context.Context, id string) (hmacSecretEncrypted, privateKeyEncrypted string, err error)
 }
 
 type Provisioner interface {
 	Provision(context.Context, string, ProvisionInput) (ProvisionResult, error)
 	RotateSecret(context.Context, string, string) (RotateResult, error)
-	ReplaceSecret(string, []byte) error
-	ReadPrivateKey(string) ([]byte, error)
 }

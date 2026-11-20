@@ -65,16 +65,21 @@ type Config struct {
 	SentryDSN                  string
 	SentryEnvironment          string
 
-	// SNAP gateway (Create VA). Credentials are loaded lazily per mitra from
-	// SNAPSecretsDir/<kode>; only the directory itself is validated at boot.
-	SNAPBaseURL    string
-	SNAPSecretsDir string
-	SNAPChannelID  string
-	SNAPOrigin     string
+	// SNAP gateway (Create VA). Credentials are loaded from the database,
+	// decrypted in backend memory only. No credential files are read or
+	// written at runtime.
+	SNAPBaseURL   string
+	SNAPChannelID string
+	SNAPOrigin    string
 	// SNAP admin credentials for registering a mitra partner
 	// (POST /admin/v1/partners with HTTP Basic auth). Never logged.
 	SNAPAdminUsername string
 	SNAPAdminPassword string
+
+	// PortalSecretsEncryptionKey encrypts at-rest mitra credentials (HMAC
+	// secret and RSA private key) stored in the database. 32+ random
+	// characters recommended. Never committed, never logged.
+	PortalSecretsEncryptionKey string
 }
 
 // SNAPEnabled reports whether the SNAP Create VA gateway is configured.
@@ -190,11 +195,11 @@ func Load() (Config, error) {
 		SentryDSN:                  str("SENTRY_DSN", ""),
 		SentryEnvironment:          str("SENTRY_ENVIRONMENT", ""),
 		SNAPBaseURL:                strings.TrimRight(str("SNAP_BASE_URL", ""), "/"),
-		SNAPSecretsDir:             str("SNAP_SECRETS_DIR", ""),
 		SNAPChannelID:              str("SNAP_CHANNEL_ID", ""),
 		SNAPOrigin:                 str("SNAP_ORIGIN", ""),
 		SNAPAdminUsername:          str("SNAP_ADMIN_USERNAME", ""),
 		SNAPAdminPassword:          str("SNAP_ADMIN_PASSWORD", ""),
+		PortalSecretsEncryptionKey: str("PORTAL_SECRETS_ENCRYPTION_KEY", ""),
 	}
 	for _, o := range strings.Split(str("CORS_ORIGIN", ""), ",") {
 		if o = strings.TrimSpace(o); o != "" {
@@ -207,10 +212,16 @@ func Load() (Config, error) {
 	if len(c.RefreshPepper) > 0 && len(c.RefreshPepper) < 16 {
 		errs = append(errs, "REFRESH_TOKEN_PEPPER must be at least 16 chars")
 	}
+	if len(c.PortalSecretsEncryptionKey) > 0 && len(c.PortalSecretsEncryptionKey) < 32 {
+		errs = append(errs, "PORTAL_SECRETS_ENCRYPTION_KEY must be at least 32 chars")
+	}
 	// The repo is public, so the placeholders in .env.example are known to
 	// everyone: a production boot with them would let anyone forge tokens.
 	if c.Production() {
-		for key, v := range map[string]string{"JWT_ACCESS_SECRET": c.JWTSecret, "REFRESH_TOKEN_PEPPER": c.RefreshPepper} {
+		for key, v := range map[string]string{"JWT_ACCESS_SECRET": c.JWTSecret, "REFRESH_TOKEN_PEPPER": c.RefreshPepper, "PORTAL_SECRETS_ENCRYPTION_KEY": c.PortalSecretsEncryptionKey} {
+			if v == "" {
+				errs = append(errs, key+" is required in production")
+			}
 			if strings.Contains(strings.ToLower(v), "change-me") {
 				errs = append(errs, key+" still has the .env.example placeholder")
 			}
@@ -219,14 +230,14 @@ func Load() (Config, error) {
 	if _, err := mail.ParseAddress(c.SMTPFrom); err != nil {
 		errs = append(errs, "SMTP_FROM must be an email")
 	}
-	// Individual mitra bundles are intentionally not inspected here: one broken
-	// mitra must not stop every other mitra. The client validates the root dir.
+	// Mitra credentials are stored encrypted in the database; one broken
+	// mitra must not stop every other mitra.
 	if c.SNAPEnabled() {
 		for key, v := range map[string]string{
-			"SNAP_SECRETS_DIR":    c.SNAPSecretsDir,
-			"SNAP_CHANNEL_ID":     c.SNAPChannelID,
-			"SNAP_ADMIN_USERNAME": c.SNAPAdminUsername,
-			"SNAP_ADMIN_PASSWORD": c.SNAPAdminPassword,
+			"SNAP_CHANNEL_ID":               c.SNAPChannelID,
+			"SNAP_ADMIN_USERNAME":           c.SNAPAdminUsername,
+			"SNAP_ADMIN_PASSWORD":           c.SNAPAdminPassword,
+			"PORTAL_SECRETS_ENCRYPTION_KEY": c.PortalSecretsEncryptionKey,
 		} {
 			if v == "" {
 				errs = append(errs, key+" is required when SNAP_BASE_URL is set")

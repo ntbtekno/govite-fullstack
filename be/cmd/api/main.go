@@ -8,6 +8,10 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -22,6 +26,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"govite/internal/kernel"
+	mitraapp "govite/internal/mitra/application"
 	mitrainfra "govite/internal/mitra/infrastructure"
 	"govite/internal/platform/config"
 	"govite/internal/platform/crypto"
@@ -115,6 +120,13 @@ func serve(ctx context.Context, cfg config.Config, pool *pgxpool.Pool) error {
 		slog.Error("login log write failed", "err", err)
 	})
 	d := server.Deps{Cfg: cfg, Pool: pool, LoginLog: server.AttemptRecorder{Log: logs}}
+	if cfg.PortalSecretsEncryptionKey != "" {
+		box, err := crypto.NewSecretBox(cfg.PortalSecretsEncryptionKey)
+		if err != nil {
+			return fmt.Errorf("PORTAL_SECRETS_ENCRYPTION_KEY: %w", err)
+		}
+		d.Cipher = box
+	}
 	if cfg.RedisURL != "" {
 		opt, err := redis.ParseURL(cfg.RedisURL)
 		if err != nil {
@@ -141,27 +153,15 @@ func serve(ctx context.Context, cfg config.Config, pool *pgxpool.Pool) error {
 		d.Push = push
 	}
 
-	// SNAP Create VA gateway. Per-mitra bundles are validated lazily; only an
-	// unreadable root directory fails boot.
-	if snap, err := snapinfra.New(snapinfra.Config{
-		BaseURL:    cfg.SNAPBaseURL,
-		SecretsDir: cfg.SNAPSecretsDir,
-		ChannelID:  cfg.SNAPChannelID,
-		Origin:     cfg.SNAPOrigin,
-	}); err != nil {
-		return fmt.Errorf("SNAP: %w", err)
-	} else if snap != nil {
-		d.SNAP = snap
-	}
-
-	// Mitra auto-provisioner: registers each new mitra with the gateway and
-	// writes its credential bundle. Only built when the gateway is configured.
+	// Mitra auto-provisioner and DB-backed credential service. The same service
+	// supplies decrypted credentials to the VA signer; no credential files are
+	// involved.
+	mitraRepo := mitrainfra.Repository{DB: postgres.New(pool)}
 	if cfg.SNAPBaseURL != "" {
 		prov, err := mitrainfra.NewProvisioner(mitrainfra.Config{
 			BaseURL:       cfg.SNAPBaseURL,
 			AdminUsername: cfg.SNAPAdminUsername,
 			AdminPassword: cfg.SNAPAdminPassword,
-			SecretsDir:    cfg.SNAPSecretsDir,
 			ChannelID:     cfg.SNAPChannelID,
 			Origin:        cfg.SNAPOrigin,
 		})
@@ -169,6 +169,16 @@ func serve(ctx context.Context, cfg config.Config, pool *pgxpool.Pool) error {
 			return fmt.Errorf("SNAP provisioner: %w", err)
 		}
 		d.MitraProv = prov
+	}
+	mitraService := &mitraapp.Service{Repo: mitraRepo, Tx: postgres.New(pool), Prov: d.MitraProv, Encryptor: d.Cipher}
+	d.MitraApp = mitraService
+	if snap, err := snapinfra.New(snapinfra.Config{
+		BaseURL: cfg.SNAPBaseURL, ChannelID: cfg.SNAPChannelID, Origin: cfg.SNAPOrigin,
+		Loader: mitraService.GetCredentials,
+	}); err != nil {
+		return fmt.Errorf("SNAP: %w", err)
+	} else if snap != nil {
+		d.SNAP = snap
 	}
 
 	// Optional read-only MySQL reporting sidecar. Empty DSN keeps the server
@@ -301,9 +311,34 @@ func seedE2EMitra(ctx context.Context, cfg config.Config, q *store.Queries) erro
 	mitra, err := q.GetMitraByKode(ctx, kode)
 	if err != nil {
 		mitra = store.Mitra{ID: kernel.NewID(), KodeMitra: kode, Nama: "Mitra E2E", IsActive: true}
-		if err := q.CreateMitra(ctx, store.CreateMitraParams{ID: mitra.ID, KodeMitra: mitra.KodeMitra, Nama: mitra.Nama, IsActive: true, ProvisionStatus: "READY"}); err != nil {
+		if err := q.CreateMitra(ctx, store.CreateMitraParams{ID: mitra.ID, KodeMitra: mitra.KodeMitra, Nama: mitra.Nama, IsActive: true, PartnerServiceID: "     " + kode, VaPrefix: kode + "41", ProvisionStatus: "READY", ConnectionType: "PORTAL_ONLY"}); err != nil {
 			return err
 		}
+	}
+	box, err := crypto.NewSecretBox(cfg.PortalSecretsEncryptionKey)
+	if err != nil {
+		return fmt.Errorf("e2e mitra encryption: %w", err)
+	}
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return err
+	}
+	privateDER, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		return err
+	}
+	privatePEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateDER})
+	hmacCipher, err := crypto.EncryptWithSecretBox(box, "e2e-only-hmac-secret")
+	if err != nil {
+		return err
+	}
+	privateCipher, err := crypto.EncryptWithSecretBox(box, string(privatePEM))
+	if err != nil {
+		return err
+	}
+	partnerID := "e2e-partner"
+	if err := q.SeedMitraCredentials(ctx, store.SeedMitraCredentialsParams{ID: mitra.ID, PartnerServiceID: "     " + kode, VaPrefix: kode + "41", ProvisionPartnerID: &partnerID, HmacSecretEncrypted: &hmacCipher, PrivateKeyEncrypted: &privateCipher}); err != nil {
+		return err
 	}
 	hash, err := crypto.HashPassword(password)
 	if err != nil {
