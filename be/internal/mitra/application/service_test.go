@@ -79,6 +79,16 @@ func (r *fakeRepo) MarkReady(_ context.Context, _ string, delivered bool) error 
 	}
 	return nil
 }
+func (r *fakeRepo) MarkNeedsKeypair(_ context.Context, id, partnerID, provisionError string) error {
+	r.marked = true
+	r.partnerID, r.repairErr = partnerID, provisionError
+	if r.mitra.ID == id {
+		r.mitra.ProvisionStatus = domain.ProvisionStatusNeedsKeypair
+		r.mitra.ProvisionPartnerID = &partnerID
+		r.mitra.ProvisionError = &provisionError
+	}
+	return nil
+}
 func (r *fakeRepo) SaveEncryptedCredentials(_ context.Context, id, hmacEnc, privEnc string) error {
 	if r.mitra.ID == id {
 		r.mitra.HMACSecretEncrypted = &hmacEnc
@@ -243,8 +253,25 @@ func TestCreateDeliversCredentialsOnlyForHostToHost(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if result.Credentials != nil {
-				t.Fatalf("Phase 1 must not return credentials")
+			if (result.Credentials != nil) != tc.wantCredentials {
+				t.Fatalf("credentials present = %v, want %v", result.Credentials != nil, tc.wantCredentials)
+			}
+			if tc.wantCredentials {
+				if result.Credentials.ClientSecret != "fixture-value" {
+					t.Fatalf("unexpected client secret: %s", result.Credentials.ClientSecret)
+				}
+				if result.Credentials.PrivateKeyPEM != "fixture-pem" {
+					t.Fatalf("unexpected private key PEM")
+				}
+				// Stored value must be ciphertext, not plaintext
+				storedHMAC := *repo.mitra.HMACSecretEncrypted
+				storedPriv := *repo.mitra.PrivateKeyEncrypted
+				if storedHMAC == "fixture-value" || storedHMAC == "" {
+					t.Fatalf("hmac.secret not encrypted in DB: %s", storedHMAC)
+				}
+				if storedPriv == "fixture-pem" || storedPriv == "" {
+					t.Fatalf("private.pem not encrypted in DB: %s", storedPriv)
+				}
 			}
 			if repo.mitra.CredentialsDelivered != tc.wantCredentials {
 				t.Fatalf("credentialsDelivered = %v", repo.mitra.CredentialsDelivered)
@@ -253,17 +280,132 @@ func TestCreateDeliversCredentialsOnlyForHostToHost(t *testing.T) {
 	}
 }
 
+func TestCreateDoesNotReturnSecretForPortalOnly(t *testing.T) {
+	repo := &fakeRepo{}
+	prov := &fakeProv{result: domain.ProvisionResult{
+		PartnerID: "P-1", ClientID: "103", GatewayBaseURL: "https://gateway.example",
+		ClientSecret: []byte("fixture-value"), PrivateKeyPEM: []byte("fixture-pem"),
+	}}
+	svc := &Service{Repo: repo, Tx: fakeTx{}, Prov: prov, Encryptor: newTestBox(t)}
+	in := validCreateInput()
+	in.ConnectionType = domain.ConnectionPortalOnly
+	result, err := svc.Create(context.Background(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Credentials != nil {
+		t.Fatalf("PORTAL_ONLY must not return credentials")
+	}
+	// Encrypted values must not equal plaintext
+	if *repo.mitra.HMACSecretEncrypted == "fixture-value" || *repo.mitra.PrivateKeyEncrypted == "fixture-pem" {
+		t.Fatal("plaintext secret stored in DB")
+	}
+}
+
 func TestRotateDeliversNewSecretOnlyForHostToHost(t *testing.T) {
 	partnerID := "P-1"
-	repo := &fakeRepo{mitra: domain.Mitra{ID: "m-1", KodeMitra: "103", Nama: "H2H", PartnerServiceID: "     103", VAPrefix: "10341", ProvisionPartnerID: &partnerID, ConnectionType: domain.ConnectionHostToHost, CredentialsDelivered: true}}
+	repo := &fakeRepo{mitra: domain.Mitra{ID: "m-1", KodeMitra: "103", Nama: "H2H", PartnerServiceID: "     103", VAPrefix: "10341", ProvisionPartnerID: &partnerID, ConnectionType: domain.ConnectionHostToHost, CredentialsDelivered: true, HMACSecretEncrypted: strPtr("old-hmac"), PrivateKeyEncrypted: strPtr("old-priv")}}
 	prov := &fakeProv{rotate: domain.RotateResult{ClientSecret: []byte("rotated-fixture")}}
 	svc := &Service{Repo: repo, Tx: fakeTx{}, Prov: prov, Encryptor: newTestBox(t)}
 	result, err := svc.RotateSecret(context.Background(), "m-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Credentials != nil {
+	if result.Credentials == nil || result.Credentials.ClientSecret != "rotated-fixture" {
 		t.Fatalf("unexpected rotate result: %+v", result)
+	}
+	// RSA key should not be re-shown on normal rotation
+	if result.Credentials.PrivateKeyPEM != "" {
+		t.Fatalf("RSA key should not be re-shown on normal rotation")
+	}
+	// Stored value must be ciphertext, not plaintext
+	storedHMAC := *repo.mitra.HMACSecretEncrypted
+	if storedHMAC == "rotated-fixture" || storedHMAC == "" {
+		t.Fatalf("rotated hmac.secret not encrypted in DB: %s", storedHMAC)
+	}
+	// Private key unchanged
+	if *repo.mitra.PrivateKeyEncrypted != "old-priv" {
+		t.Fatalf("private key changed during rotation")
+	}
+}
+
+func TestRotateAllowedWithOnlyPartnerId(t *testing.T) {
+	// Mitra exists in DB with only partnerId, no credentials at all
+	repo := &fakeRepo{mitra: domain.Mitra{ID: "m-2", KodeMitra: "104", Nama: "Empty", PartnerServiceID: "     104", VAPrefix: "10441", ProvisionPartnerID: strPtr("P-2"), ConnectionType: domain.ConnectionPortalOnly}}
+	prov := &fakeProv{rotate: domain.RotateResult{ClientSecret: []byte("new-secret")}}
+	svc := &Service{Repo: repo, Tx: fakeTx{}, Prov: prov, Encryptor: newTestBox(t)}
+	result, err := svc.RotateSecret(context.Background(), "m-2")
+	if err != nil {
+		t.Fatalf("rotation should be allowed with only partnerId: %v", err)
+	}
+	if result.Credentials != nil {
+		t.Fatalf("PORTAL_ONLY rotation must not return credentials")
+	}
+	// New secret should be stored encrypted
+	storedHMAC := *repo.mitra.HMACSecretEncrypted
+	if storedHMAC == "new-secret" || storedHMAC == "" {
+		t.Fatalf("new secret not encrypted in DB: %s", storedHMAC)
+	}
+}
+
+func TestRotateBlockedWithoutPartnerId(t *testing.T) {
+	// Mitra exists but has no partnerId
+	repo := &fakeRepo{mitra: domain.Mitra{ID: "m-3", KodeMitra: "105", Nama: "NoPartner", PartnerServiceID: "     105", VAPrefix: "10541", ConnectionType: domain.ConnectionPortalOnly}}
+	prov := &fakeProv{}
+	svc := &Service{Repo: repo, Tx: fakeTx{}, Prov: prov, Encryptor: newTestBox(t)}
+	_, err := svc.RotateSecret(context.Background(), "m-3")
+	if err == nil {
+		t.Fatal("rotation without partnerId should be blocked")
+	}
+}
+
+func TestRotateMissingPrivateKeyResultsNeedsKeypair(t *testing.T) {
+	partnerID := "P-1"
+	// HOST_TO_HOST mitra without private key in DB
+	repo := &fakeRepo{mitra: domain.Mitra{ID: "m-4", KodeMitra: "106", Nama: "NoKey", PartnerServiceID: "     106", VAPrefix: "10641", ProvisionPartnerID: &partnerID, ConnectionType: domain.ConnectionHostToHost, CredentialsDelivered: true, HMACSecretEncrypted: strPtr("existing-hmac")}}
+	prov := &fakeProv{rotate: domain.RotateResult{ClientSecret: []byte("rotated-fixture")}}
+	svc := &Service{Repo: repo, Tx: fakeTx{}, Prov: prov, Encryptor: newTestBox(t)}
+	result, err := svc.RotateSecret(context.Background(), "m-4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// No credentials delivered (private key missing)
+	if result.Credentials != nil {
+		t.Fatalf("unexpected credentials: %+v", result.Credentials)
+	}
+	// Mitra should be marked NEEDS_KEYPAIR (private key missing)
+	if repo.mitra.ProvisionStatus != domain.ProvisionStatusNeedsKeypair {
+		t.Fatalf("expected NEEDS_KEYPAIR status, got: %s", repo.mitra.ProvisionStatus)
+	}
+	if repo.mitra.ProvisionError == nil || *repo.mitra.ProvisionError != "rsa private key missing in DB" {
+		t.Fatalf("expected NEEDS_KEYPAIR detail, got: %v", repo.mitra.ProvisionError)
+	}
+}
+
+func TestRotateSavesNewSecretEncrypted(t *testing.T) {
+	partnerID := "P-1"
+	repo := &fakeRepo{mitra: domain.Mitra{ID: "m-5", KodeMitra: "107", Nama: "Full", PartnerServiceID: "     107", VAPrefix: "10741", ProvisionPartnerID: &partnerID, ConnectionType: domain.ConnectionHostToHost, CredentialsDelivered: true, HMACSecretEncrypted: strPtr("old-hmac"), PrivateKeyEncrypted: strPtr("old-priv")}}
+	prov := &fakeProv{rotate: domain.RotateResult{ClientSecret: []byte("brand-new-secret")}}
+	svc := &Service{Repo: repo, Tx: fakeTx{}, Prov: prov, Encryptor: newTestBox(t)}
+	result, err := svc.RotateSecret(context.Background(), "m-5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// New secret stored encrypted
+	storedHMAC := *repo.mitra.HMACSecretEncrypted
+	if storedHMAC == "brand-new-secret" || storedHMAC == "" {
+		t.Fatalf("new secret not encrypted in DB: %s", storedHMAC)
+	}
+	// Private key unchanged
+	storedPriv := *repo.mitra.PrivateKeyEncrypted
+	if storedPriv != "old-priv" {
+		t.Fatalf("private key changed during rotation: %s", storedPriv)
+	}
+	if result.Credentials == nil || result.Credentials.ClientSecret != "brand-new-secret" {
+		t.Fatalf("unexpected rotate result: %+v", result)
+	}
+	if result.Credentials.PrivateKeyPEM != "" {
+		t.Fatalf("RSA key should not be re-shown on normal rotation")
 	}
 }
 

@@ -42,10 +42,16 @@ func (s *Service) Get(ctx context.Context, id string) (domain.Mitra, error) {
 	if err != nil {
 		return domain.Mitra{}, err
 	}
+	hasID := mitra.ProvisionPartnerID != nil
+	hasHMAC := mitra.HMACSecretEncrypted != nil && *mitra.HMACSecretEncrypted != ""
+	hasPriv := mitra.PrivateKeyEncrypted != nil && *mitra.PrivateKeyEncrypted != ""
+	mitra.HasIdentity = hasID
+	mitra.HasHmacSecret = hasHMAC
+	mitra.HasPrivateKey = hasPriv
 	mitra.BundleCompleteness = &domain.BundleCompleteness{
-		PartnerJSON: mitra.ProvisionPartnerID != nil,
-		HMACSecret:  mitra.HMACSecretEncrypted != nil && *mitra.HMACSecretEncrypted != "",
-		PrivatePEM:  mitra.PrivateKeyEncrypted != nil && *mitra.PrivateKeyEncrypted != "",
+		PartnerJSON: hasID,
+		HMACSecret:  hasHMAC,
+		PrivatePEM:  hasPriv,
 	}
 	return mitra, nil
 }
@@ -157,9 +163,30 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (CreateResult, err
 	if err != nil {
 		return CreateResult{}, err
 	}
-	// Phase 1 never returns credential material. Phase 2 owns one-time H2H
-	// delivery and will load it from the encrypted DB columns.
-	return CreateResult{Mitra: mitra}, nil
+	result := CreateResult{Mitra: mitra}
+	if in.ConnectionType == domain.ConnectionHostToHost && provision.ClientSecret != nil {
+		// One-time delivery: decrypt from DB columns and return once.
+		partnerID, clientID, secret, privateKeyPEM, err := s.GetCredentials(ctx, in.KodeMitra)
+		if err != nil {
+			return CreateResult{}, err
+		}
+		result.Credentials = &CredentialDelivery{
+			PartnerID:        partnerID,
+			ClientID:         clientID,
+			PartnerServiceID: in.PartnerServiceID,
+			VAPrefix:         in.VAPrefix,
+			GatewayBaseURL:   provision.GatewayBaseURL,
+			ClientSecret:     secret,
+			PrivateKeyPEM:    privateKeyPEM,
+		}
+	}
+	// Mark credentials as delivered so refresh/reopen cannot re-show them.
+	if in.ConnectionType == domain.ConnectionHostToHost && provision.ClientSecret != nil {
+		if err := s.Repo.MarkReady(ctx, id, true); err != nil {
+			return CreateResult{}, err
+		}
+	}
+	return result, nil
 }
 
 // GetCredentials returns decrypted credentials for one mitra kode, used by the
@@ -304,6 +331,8 @@ func (s *Service) RotateSecret(ctx context.Context, id string) (RotateResult, er
 		return RotateResult{}, err
 	}
 	if s.Prov == nil || mitra.ProvisionPartnerID == nil {
+		// Rotation requires a partnerId (gateway-assigned). Without it there is
+		// nothing to rotate against.
 		return RotateResult{}, domain.ErrSNAPNotConfigured
 	}
 	rotated, err := s.Prov.RotateSecret(ctx, mitra.KodeMitra, *mitra.ProvisionPartnerID)
@@ -333,7 +362,22 @@ func (s *Service) RotateSecret(ctx context.Context, id string) (RotateResult, er
 		_ = s.Repo.MarkNeedsRepair(ctx, id, *mitra.ProvisionPartnerID, err.Error())
 		return RotateResult{}, err
 	}
-	delivered := mitra.CredentialsDelivered
+	// Determine delivery eligibility and provision status.
+	delivered := mitra.ConnectionType == domain.ConnectionHostToHost
+	hasPrivateKey := privEnc != "" && privEnc != "null"
+	if delivered && !hasPrivateKey {
+		// HOST_TO_HOST without a private key cannot complete rotation: the new
+		// secret is saved but the mitra still cannot request tokens.
+		if err := s.Repo.MarkNeedsKeypair(ctx, id, *mitra.ProvisionPartnerID, "rsa private key missing in DB"); err != nil {
+			_ = s.Repo.MarkNeedsRepair(ctx, id, *mitra.ProvisionPartnerID, "persist rotated credential state: "+err.Error())
+			return RotateResult{}, err
+		}
+		mitra, err = s.Repo.Get(ctx, id)
+		if err != nil {
+			return RotateResult{}, err
+		}
+		return RotateResult{Mitra: mitra}, nil
+	}
 	if err := s.Repo.MarkReady(ctx, id, delivered); err != nil {
 		_ = s.Repo.MarkNeedsRepair(ctx, id, *mitra.ProvisionPartnerID, "persist rotated credential state: "+err.Error())
 		return RotateResult{}, err
@@ -342,8 +386,28 @@ func (s *Service) RotateSecret(ctx context.Context, id string) (RotateResult, er
 	if err != nil {
 		return RotateResult{}, err
 	}
-	// Phase 1 never returns the rotated secret. Phase 2 owns one-time delivery.
-	return RotateResult{Mitra: mitra}, nil
+	result := RotateResult{Mitra: mitra}
+	if delivered {
+		// One-time delivery: new HMAC secret only. RSA key is unchanged and is
+		// not re-shown. Load the private key from DB only for type-change
+		// scenarios where it has never been delivered.
+		var privateKey string
+		if !mitra.CredentialsDelivered && hasPrivateKey {
+			privateKey, err = crypto.DecryptWithSecretBox(s.Encryptor, privEnc)
+			if err != nil {
+				return RotateResult{}, domain.ErrProvisionFailed.WithDetail("decrypt private.pem for first H2H delivery: " + err.Error())
+			}
+		}
+		result.Credentials = &CredentialDelivery{
+			PartnerID:        *mitra.ProvisionPartnerID,
+			ClientID:         mitra.KodeMitra,
+			PartnerServiceID: mitra.PartnerServiceID,
+			VAPrefix:         mitra.VAPrefix,
+			ClientSecret:     string(rotated.ClientSecret),
+			PrivateKeyPEM:    privateKey,
+		}
+	}
+	return result, nil
 }
 
 type ActiveInput struct {

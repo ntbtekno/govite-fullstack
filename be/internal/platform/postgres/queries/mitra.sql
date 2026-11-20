@@ -38,6 +38,11 @@ UPDATE "mitra"
 SET provision_status = 'NEEDS_REPAIR', provision_partner_id = $2, provision_error = $3
 WHERE id = $1;
 
+-- name: MarkMitraNeedsKeypair :exec
+UPDATE "mitra"
+SET provision_status = 'NEEDS_KEYPAIR', provision_partner_id = $2, provision_error = $3
+WHERE id = $1;
+
 -- name: MarkMitraReady :exec
 UPDATE "mitra"
 SET provision_status = 'READY', provision_error = NULL, credentials_delivered = $2

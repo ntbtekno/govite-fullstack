@@ -8,9 +8,10 @@ import (
 )
 
 const (
-	ProvisionStatusNeedsRepair = "NEEDS_REPAIR"
-	ConnectionPortalOnly       = "PORTAL_ONLY"
-	ConnectionHostToHost       = "HOST_TO_HOST"
+	ProvisionStatusNeedsRepair  = "NEEDS_REPAIR"
+	ProvisionStatusNeedsKeypair = "NEEDS_KEYPAIR"
+	ConnectionPortalOnly        = "PORTAL_ONLY"
+	ConnectionHostToHost        = "HOST_TO_HOST"
 )
 
 var (
@@ -37,9 +38,13 @@ type Mitra struct {
 	CredentialsDelivered bool      `json:"credentialsDelivered"`
 	// Encrypted credential material. Never returned to the frontend; used only
 	// internally to verify completeness and to feed the VA signing client.
-	HMACSecretEncrypted *string             `json:"-"`
-	PrivateKeyEncrypted *string             `json:"-"`
-	BundleCompleteness  *BundleCompleteness `json:"bundleCompleteness,omitempty"`
+	HMACSecretEncrypted *string `json:"-"`
+	PrivateKeyEncrypted *string `json:"-"`
+	// DB-based credential status (information only, returned to frontend).
+	HasIdentity        bool                `json:"hasIdentity"`
+	HasHmacSecret      bool                `json:"hasHmacSecret"`
+	HasPrivateKey      bool                `json:"hasPrivateKey"`
+	BundleCompleteness *BundleCompleteness `json:"bundleCompleteness,omitempty"`
 }
 
 type BundleCompleteness struct {
@@ -104,6 +109,7 @@ type Repository interface {
 	Count(context.Context, Filter) (int64, error)
 	Create(context.Context, string, string, string, bool, string, string, string, string, *string, *string, string, bool, *string, *string) error
 	MarkNeedsRepair(context.Context, string, string, string) error
+	MarkNeedsKeypair(context.Context, string, string, string) error
 	GetByKode(context.Context, string) (Mitra, error)
 	Update(context.Context, string, Changes) error
 	SetActive(context.Context, string, bool) error

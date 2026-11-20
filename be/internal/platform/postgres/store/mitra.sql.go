@@ -182,6 +182,23 @@ func (q *Queries) ListMitra(ctx context.Context, arg ListMitraParams) ([]Mitra, 
 	return items, nil
 }
 
+const markMitraNeedsKeypair = `-- name: MarkMitraNeedsKeypair :exec
+UPDATE "mitra"
+SET provision_status = 'NEEDS_KEYPAIR', provision_partner_id = $2, provision_error = $3
+WHERE id = $1
+`
+
+type MarkMitraNeedsKeypairParams struct {
+	ID                 string
+	ProvisionPartnerID *string
+	ProvisionError     *string
+}
+
+func (q *Queries) MarkMitraNeedsKeypair(ctx context.Context, arg MarkMitraNeedsKeypairParams) error {
+	_, err := q.db.Exec(ctx, markMitraNeedsKeypair, arg.ID, arg.ProvisionPartnerID, arg.ProvisionError)
+	return err
+}
+
 const markMitraNeedsRepair = `-- name: MarkMitraNeedsRepair :exec
 UPDATE "mitra"
 SET provision_status = 'NEEDS_REPAIR', provision_partner_id = $2, provision_error = $3

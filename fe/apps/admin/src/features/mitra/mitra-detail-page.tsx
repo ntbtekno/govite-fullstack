@@ -37,7 +37,8 @@ export function MitraDetailPage() {
             <option value="HOST_TO_HOST">Host to host</option>
           </select>
         </label>
-        {row.connectionType === "HOST_TO_HOST" && <p className="text-sm text-muted-foreground">Existing credentials cannot be shown again. Rotate the secret to issue a new one-time credential delivery.</p>}
+        {row.connectionType === "HOST_TO_HOST" && !row.credentialsDelivered && <p className="text-sm text-muted-foreground">Existing credentials cannot be shown again. Rotate the secret to issue a new one-time credential delivery.</p>}
+        {row.connectionType === "PORTAL_ONLY" && <p className="text-sm text-muted-foreground">Switching to Host to host will not recover any previous secret — it is unrecoverable from the API. Use Rotate Secret to issue a new one-time credential delivery.</p>}
       </div>
     </div>}
   </RequirePermission>

@@ -395,11 +395,10 @@ export interface MitraResponse {
   provisionError?: string
   connectionType: "PORTAL_ONLY" | "HOST_TO_HOST"
   credentialsDelivered: boolean
-  bundleCompleteness?: {
-    partnerJson: boolean
-    hmacSecret: boolean
-    privatePem: boolean
-  }
+  // DB-based credential status (information only, never a blocker for rotate)
+  hasIdentity: boolean
+  hasHmacSecret: boolean
+  hasPrivateKey: boolean
 }
 
 export interface MitraCredentialDelivery {

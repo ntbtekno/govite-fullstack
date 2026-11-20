@@ -137,7 +137,7 @@ test("create a user from the dialog", async ({ page }) => {
   expect(problems).toEqual([])
 })
 
-test("superadmin creates H2H mitra and returns only the encrypted-storage summary", async ({ page }) => {
+test("superadmin creates H2H mitra and returns one-time credentials", async ({ page }) => {
   const problems = watch(page)
   await signIn(page)
   await page.goto("/admin/administration/mitra")
@@ -162,8 +162,20 @@ test("superadmin creates H2H mitra and returns only the encrypted-storage summar
   const created = responseBody.data
   expect(created.mitra.provisionStatus).toBe("READY")
   expect(created.mitra.connectionType).toBe("HOST_TO_HOST")
-  expect(created).not.toHaveProperty("credentials")
-  expect(JSON.stringify(created)).not.toMatch(/clientSecret|privateKeyPem|BEGIN PRIVATE KEY/)
+  expect(created.credentials).toBeTruthy()
+  expect(created.credentials.clientSecret).toBeTruthy()
+  expect(created.credentials.privateKeyPem).toContain("BEGIN PRIVATE KEY")
+  expect(created.credentials.partnerId).toBeTruthy()
+  expect(created.credentials.clientId).toBe(kode)
+  expect(created.credentials.partnerServiceId).toBe(`     ${kode}`)
+  expect(created.credentials.vaPrefix).toBe(`${kode}41`)
+  expect(created.credentials.gatewayBaseUrl).toBeTruthy()
+  // One-time credentials page should appear
+  await expect(page.getByRole("heading", { name: "One-time credentials" })).toBeVisible()
+  await expect(page.getByText("These credentials are shown once", { exact: false })).toBeVisible()
+  // Refresh does not re-show secrets
+  await page.reload()
+  await expect(page.getByText("Credentials already delivered")).toBeVisible()
   expect(problems).toEqual([])
 })
 
@@ -186,6 +198,49 @@ test("superadmin creates portal-only mitra without a credentials screen", async 
   await expect(page.getByRole("heading", { name: "One-time credentials" })).toHaveCount(0)
   await page.getByPlaceholder(/search/i).fill(kode)
   await expect(page.getByRole("row", { name: new RegExp(kode) })).toContainText("Portal only")
+  expect(problems).toEqual([])
+})
+
+test("superadmin sees rotate menu with DB credential status", async ({ page }) => {
+  const problems = watch(page)
+  await signIn(page)
+  await page.goto("/admin/administration/mitra")
+  await page.getByRole("button", { name: "Add mitra" }).click()
+  const dialog = page.getByRole("dialog", { name: "New mitra" })
+  const kode = String(Date.now() + 2).slice(-3)
+  await dialog.getByLabel("Kode mitra").fill(kode)
+  await dialog.getByLabel("Nama mitra").fill("E2E Rotate Mitra")
+  await dialog.getByLabel("Partner Service ID").fill(`     ${kode}`)
+  await dialog.getByLabel("VA Prefix").fill(`${kode}41`)
+  await dialog.getByLabel("Kode Cabang").fill("001")
+  await dialog.getByLabel("Callback URL").fill("https://example.com/callback")
+  await dialog.getByLabel("IP whitelist").fill("127.0.0.1")
+  await dialog.getByLabel("Connection type").selectOption("HOST_TO_HOST")
+  const responsePromise = page.waitForResponse(
+    (response) => response.url().includes("/api/v1/mitra") && response.request().method() === "POST",
+  )
+  await dialog.getByRole("button", { name: "Create" }).click()
+  const response = await responsePromise
+  expect(response.ok()).toBeTruthy()
+  const created = (await response.json()).data
+  const mitraId = created.mitra.id
+  // Navigate directly to mitra detail page
+  await page.goto(`/admin/administration/mitra/${mitraId}`)
+  await expect(page.getByRole("link", { name: "Rotate Secret" })).toBeVisible()
+  // Open rotate page
+  await page.getByRole("link", { name: "Rotate Secret" }).click()
+  await expect(page.getByRole("heading", { name: "Rotate Secret" })).toBeVisible()
+  // DB credential status shown as information
+  await expect(page.getByText("Identity", { exact: true })).toBeVisible()
+  await expect(page.getByText("HMAC secret", { exact: true })).toBeVisible()
+  await expect(page.getByText("RSA private key", { exact: true })).toBeVisible()
+  // Confirm rotate dialog appears with warning
+  await page.getByRole("button", { name: "Rotate Secret" }).click()
+  await expect(page.getByRole("dialog", { name: "Confirm secret rotation" })).toBeVisible()
+  await expect(page.getByText("Rotation invalidates the old secret immediately")).toBeVisible()
+  // Confirm Rotate button enabled (partnerId present)
+  await expect(page.getByRole("button", { name: "Confirm Rotate" })).toBeEnabled()
+  await page.getByRole("button", { name: "Cancel" }).click()
   expect(problems).toEqual([])
 })
 

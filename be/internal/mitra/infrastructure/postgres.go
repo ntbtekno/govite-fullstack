@@ -71,6 +71,10 @@ func (r Repository) MarkNeedsRepair(ctx context.Context, id, partnerID, provisio
 	return r.DB.Q(ctx).MarkMitraNeedsRepair(ctx, store.MarkMitraNeedsRepairParams{ID: id, ProvisionPartnerID: &partnerID, ProvisionError: &provisionError})
 }
 
+func (r Repository) MarkNeedsKeypair(ctx context.Context, id, partnerID, provisionError string) error {
+	return r.DB.Q(ctx).MarkMitraNeedsKeypair(ctx, store.MarkMitraNeedsKeypairParams{ID: id, ProvisionPartnerID: &partnerID, ProvisionError: &provisionError})
+}
+
 func (r Repository) GetByKode(ctx context.Context, kode string) (domain.Mitra, error) {
 	row, err := r.DB.Q(ctx).GetMitraByKode(ctx, kode)
 	if err != nil {
